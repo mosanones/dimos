@@ -170,6 +170,19 @@ class ConnectionModule(Module):
         """Make the robot lie down."""
         return self.connection.liedown()
 
+    @rpc
+    def publish_request(self, topic: str, data: dict):
+        """Publish a request to the WebRTC connection.
+
+        Args:
+            topic: The RTC topic to publish to
+            data: The data dictionary to publish
+
+        Returns:
+            The result of the publish request
+        """
+        return self.connection.publish_request(topic, data)
+
 
 class ControlModule(Module):
     plancmd: Out[Pose] = None
