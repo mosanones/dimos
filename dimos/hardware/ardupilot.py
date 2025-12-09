@@ -52,6 +52,7 @@ from dimos_lcm.sensor_msgs import (
 from dimos_lcm.nav_msgs import Odometry, Path
 from dimos_lcm.geometry_msgs import (
     PoseStamped,
+    PoseWithCovarianceStamped,
     Pose,
     Point,
     Quaternion,
@@ -71,6 +72,7 @@ from dimos.msgs.geometry_msgs import Transform
 
 # Set msg_name for all geometry_msgs types
 PoseStamped.msg_name = "geometry_msgs.PoseStamped"
+PoseWithCovarianceStamped.msg_name = "geometry_msgs.PoseWithCovarianceStamped"
 Pose.msg_name = "geometry_msgs.Pose"
 Point.msg_name = "geometry_msgs.Point"
 Quaternion.msg_name = "geometry_msgs.Quaternion"
@@ -170,7 +172,7 @@ class ArduPilotInterface:
         self.gps_status = {"fix_type": 0, "satellites": 0, "hdop": 0.0, "vdop": 0.0}
         self.local_position = {"x": 0.0, "y": 0.0, "z": 0.0}
         self.velocity = {"vx": 0.0, "vy": 0.0, "vz": 0.0}
-        self.orientation = {"roll": 0.0, "pitch": 0.0, "yaw": 0.0}
+        self.orientation = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}  # Store as quaternion directly
         self.angular_velocity = {"rollspeed": 0.0, "pitchspeed": 0.0, "yawspeed": 0.0}
         self.pose_covariance = [0.0] * 36  # 6x6 covariance matrix
         self.twist_covariance = [0.0] * 36  # 6x6 covariance matrix
@@ -197,6 +199,7 @@ class ArduPilotInterface:
             "alt": 0.0,
             "climb": 0.0,
         }
+        self.servo_output = {"servos": [0] * 16}  # 16 servo channels
 
         # Timestamps
         self.last_global_position_time = 0
@@ -341,9 +344,22 @@ class ArduPilotInterface:
                     elif msg_type == "ATTITUDE":
                         # Convert NED to ENU frame when receiving data
                         # Orientation: NED -> ENU (roll_ned -> -pitch_enu, pitch_ned -> -roll_enu, yaw_ned -> yaw_enu)
-                        self.orientation["roll"] = msg.roll  # NED pitch -> ENU roll (negated)
-                        self.orientation["pitch"] = -msg.pitch  # NED roll -> ENU pitch (negated)
-                        self.orientation["yaw"] = np.pi / 2 - msg.yaw  # NED yaw -> ENU yaw (same)
+                        roll = msg.roll  # NED pitch -> ENU roll (negated)
+                        pitch = -msg.pitch  # NED roll -> ENU pitch (negated)
+                        yaw = np.pi / 2 - msg.yaw  # NED yaw -> ENU yaw (same)
+
+                        # Convert Euler angles to quaternion and store directly
+                        cy = math.cos(yaw * 0.5)
+                        sy = math.sin(yaw * 0.5)
+                        cp = math.cos(pitch * 0.5)
+                        sp = math.sin(pitch * 0.5)
+                        cr = math.cos(roll * 0.5)
+                        sr = math.sin(roll * 0.5)
+
+                        self.orientation["w"] = cr * cp * cy + sr * sp * sy
+                        self.orientation["x"] = sr * cp * cy - cr * sp * sy
+                        self.orientation["y"] = cr * sp * cy + sr * cp * sy
+                        self.orientation["z"] = cr * cp * sy - sr * sp * cy
 
                         # Angular velocity: NED -> ENU
                         self.angular_velocity["rollspeed"] = (
@@ -549,7 +565,7 @@ class ArduPilotInterface:
                             logger.warning("vfr_hud_data not initialized, skipping VFR_HUD message")
 
                     elif msg_type == "SERVO_OUTPUT_RAW":
-                        # Servo output data - not needed for sensor publishing
+                        # This probably requires mavros_msgs to be installed
                         pass
 
                     elif msg_type == "COMMAND_ACK":
@@ -668,33 +684,18 @@ class ArduPilotInterface:
 
     def get_odometry_data(self) -> Dict[str, Any]:
         """Get odometry data for Odometry message."""
-        # Convert Euler angles to quaternion (already in ENU frame)
-        roll, pitch, yaw = (
-            self.orientation["roll"],
-            self.orientation["pitch"],
-            self.orientation["yaw"],
-        )
-
-        # Quaternion conversion
-        cy = math.cos(yaw * 0.5)
-        sy = math.sin(yaw * 0.5)
-        cp = math.cos(pitch * 0.5)
-        sp = math.sin(pitch * 0.5)
-        cr = math.cos(roll * 0.5)
-        sr = math.sin(roll * 0.5)
-
-        q_w = cr * cp * cy + sr * sp * sy
-        q_x = sr * cp * cy - cr * sp * sy
-        q_y = cr * sp * cy + sr * cp * sy
-        q_z = cr * cp * sy - sr * sp * cy
-
         return {
             "position": [
                 self.local_position["x"],
                 self.local_position["y"],
                 self.local_position["z"],
             ],
-            "orientation": [q_x, q_y, q_z, q_w],
+            "orientation": [
+                self.orientation["x"],
+                self.orientation["y"],
+                self.orientation["z"],
+                self.orientation["w"],
+            ],
             "linear_velocity": [self.velocity["vx"], self.velocity["vy"], self.velocity["vz"]],
             "angular_velocity": [
                 self.angular_velocity["rollspeed"],
@@ -747,12 +748,10 @@ class ArduPilotModule(Module):
     battery: Out[BatteryState] = None
 
     # Position outputs (standard ROS messages)
-    local_pose: Out[PoseStamped] = None
-    local_pose_cov: Out[PoseStamped] = None
+    local_pose_cov: Out[PoseWithCovarianceStamped] = None
     local_velocity: Out[TwistStamped] = None
     local_velocity_body: Out[TwistStamped] = None
     local_velocity_body_cov: Out[TwistStamped] = None
-    local_accel: Out[AccelStamped] = None
 
     # Status outputs (standard ROS messages)
     diagnostics: Out[DiagnosticArray] = None
@@ -1045,20 +1044,15 @@ class ArduPilotModule(Module):
             # Publish global position
             self._publish_global_position(timestamp)
 
-            # Publish local odometry
+            # Publish local odometry (includes pose and velocity data)
             self._publish_local_odometry(timestamp)
 
-            # Publish sensor data
+            # Publish sensor data (includes IMU and acceleration data)
             self._publish_imu_data(timestamp)
             self._publish_magnetic_field(timestamp)
             self._publish_pressure_data(timestamp)
             self._publish_temperature_data(timestamp)
             self._publish_battery_data(timestamp)
-
-            # Publish position data
-            self._publish_local_pose(timestamp)
-            self._publish_local_velocity(timestamp)
-            self._publish_local_accel(timestamp)
 
             # Publish GPS satellites
             self._publish_gps_satellites(timestamp)
@@ -1077,84 +1071,88 @@ class ArduPilotModule(Module):
 
     def _publish_global_position(self, timestamp: Time):
         """Publish global position as NavSatFix message."""
-        try:
-            data = self.ardupilot.get_global_position_data()
+        data = self.ardupilot.get_global_position_data()
 
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.global_frame_id)
+        # Create header
+        header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.global_frame_id)
 
-            # Create NavSatStatus - match MAVROS exactly
-            status = NavSatStatus(
-                status=data["status"],
-                service=1,  # SERVICE_GPS (match MAVROS)
-            )
+        # Create NavSatStatus - match MAVROS exactly
+        status = NavSatStatus(
+            status=data["status"],
+            service=1,  # SERVICE_GPS (match MAVROS)
+        )
 
-            # Create NavSatFix message - match MAVROS exactly
-            msg = NavSatFix(
-                header=header,
-                status=status,
-                latitude=data["latitude"],
-                longitude=data["longitude"],
-                altitude=data["altitude"],
-                position_covariance=data["position_covariance"],
-                position_covariance_type=2,  # COVARIANCE_TYPE_DIAGONAL_KNOWN (match MAVROS)
-            )
+        # Create NavSatFix message - match MAVROS exactly
+        msg = NavSatFix(
+            header=header,
+            status=status,
+            latitude=data["latitude"],
+            longitude=data["longitude"],
+            altitude=data["altitude"],
+            position_covariance=data["position_covariance"],
+            position_covariance_type=2,  # COVARIANCE_TYPE_DIAGONAL_KNOWN (match MAVROS)
+        )
 
-            self.global_position.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing global position: {e}")
+        self.global_position.publish(msg)
 
     def _publish_local_odometry(self, timestamp: Time):
-        """Publish local odometry as Odometry message."""
-        try:
-            data = self.ardupilot.get_odometry_data()
-            self._publish_tf(timestamp, data)
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.local_frame_id)
+        """Publish local odometry and related pose/velocity messages."""
+        data = self.ardupilot.get_odometry_data()
+        self._publish_tf(timestamp, data)
 
-            # Create pose with covariance
-            pose = Pose(
-                position=Point(x=data["position"][0], y=data["position"][1], z=data["position"][2]),
-                orientation=Quaternion(
-                    x=data["orientation"][0],
-                    y=data["orientation"][1],
-                    z=data["orientation"][2],
-                    w=data["orientation"][3],
-                ),
-            )
+        # Create headers
+        odom_header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.local_frame_id)
+        pose_header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.local_frame_id)
 
-            # Use actual covariance from ArduPilot
-            pose_with_cov = PoseWithCovariance(pose=pose, covariance=data["pose_covariance"])
+        # Create pose with covariance
+        pose = Pose(
+            position=Point(x=data["position"][0], y=data["position"][1], z=data["position"][2]),
+            orientation=Quaternion(
+                x=data["orientation"][0],
+                y=data["orientation"][1],
+                z=data["orientation"][2],
+                w=data["orientation"][3],
+            ),
+        )
 
-            # Create twist with covariance
-            twist = Twist(
-                linear=Vector3(
-                    x=data["linear_velocity"][0],
-                    y=data["linear_velocity"][1],
-                    z=data["linear_velocity"][2],
-                ),
-                angular=Vector3(
-                    x=data["angular_velocity"][0],
-                    y=data["angular_velocity"][1],
-                    z=data["angular_velocity"][2],
-                ),
-            )
+        # Use actual covariance from ArduPilot
+        pose_with_cov = PoseWithCovariance(pose=pose, covariance=data["pose_covariance"])
 
-            # Use actual twist covariance from ArduPilot
-            twist_with_cov = TwistWithCovariance(twist=twist, covariance=data["twist_covariance"])
+        # Create twist with covariance
+        twist = Twist(
+            linear=Vector3(
+                x=data["linear_velocity"][0],
+                y=data["linear_velocity"][1],
+                z=data["linear_velocity"][2],
+            ),
+            angular=Vector3(
+                x=data["angular_velocity"][0],
+                y=data["angular_velocity"][1],
+                z=data["angular_velocity"][2],
+            ),
+        )
 
-            # Create Odometry message
-            msg = Odometry(
-                header=header,
-                child_frame_id=self.frame_id,
-                pose=pose_with_cov,
-                twist=twist_with_cov,
-            )
-            self.local_odom.publish(msg)
+        # Use actual twist covariance from ArduPilot
+        twist_with_cov = TwistWithCovariance(twist=twist, covariance=data["twist_covariance"])
 
-        except Exception as e:
-            logger.error(f"Error publishing local odometry: {e}")
+        # Publish Odometry message
+        odom_msg = Odometry(
+            header=odom_header,
+            child_frame_id=self.frame_id,
+            pose=pose_with_cov,
+            twist=twist_with_cov,
+        )
+        self.local_odom.publish(odom_msg)
+
+        # Publish local pose with covariance (contains all pose data)
+        pose_cov_msg = PoseWithCovarianceStamped(header=pose_header, pose=pose_with_cov)
+        self.local_pose_cov.publish(pose_cov_msg)
+
+        # Publish local velocity messages (reuse the same twist data)
+        velocity_msg = TwistStamped(header=pose_header, twist=twist)
+        self.local_velocity.publish(velocity_msg)
+        self.local_velocity_body.publish(velocity_msg)
+        self.local_velocity_body_cov.publish(velocity_msg)
 
     def _publish_tf(self, timestamp: Time, data: dict):
         """Publish transform from local frame to base_link frame."""
@@ -1222,114 +1220,71 @@ class ArduPilotModule(Module):
 
     def _publish_imu_data(self, timestamp: Time):
         """Publish IMU data."""
-        try:
-            # Check if IMU outputs are available
-            if not self.imu_data:
-                logger.warning("imu_data output not available, skipping")
-                return
-            if not self.imu_data_raw:
-                logger.warning("imu_data_raw output not available, skipping")
-                return
+        # Create header
+        header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
 
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
+        # Get IMU data from ArduPilot interface
+        orientation = Quaternion(
+            x=self.ardupilot.orientation["x"],
+            y=self.ardupilot.orientation["y"],
+            z=self.ardupilot.orientation["z"],
+            w=self.ardupilot.orientation["w"],
+        )
 
-            # Get IMU data from ArduPilot interface
-            imu_data = self.ardupilot.imu_data
-            orientation = self.ardupilot.orientation
-            angular_velocity = self.ardupilot.angular_velocity
+        linear_accel = Vector3(
+            x=self.ardupilot.imu_data["linear_acceleration"][0],
+            y=self.ardupilot.imu_data["linear_acceleration"][1],
+            z=self.ardupilot.imu_data["linear_acceleration"][2],
+        )
 
-            # Debug logging
-            logger.debug(f"IMU Data - Linear Accel: {imu_data['linear_acceleration']}")
-            logger.debug(f"IMU Data - Angular Vel: {imu_data['angular_velocity']}")
-            logger.debug(
-                f"Orientation - Roll: {orientation['roll']:.3f}, Pitch: {orientation['pitch']:.3f}, Yaw: {orientation['yaw']:.3f}"
-            )
+        angular_vel = Vector3(
+            x=self.ardupilot.imu_data["angular_velocity"][0],
+            y=self.ardupilot.imu_data["angular_velocity"][1],
+            z=self.ardupilot.imu_data["angular_velocity"][2],
+        )
 
-            # Convert Euler angles to quaternion (already in ENU frame)
-            roll, pitch, yaw = orientation["roll"], orientation["pitch"], orientation["yaw"]
-            cy = math.cos(yaw * 0.5)
-            sy = math.sin(yaw * 0.5)
-            cp = math.cos(pitch * 0.5)
-            sp = math.sin(pitch * 0.5)
-            cr = math.cos(roll * 0.5)
-            sr = math.sin(roll * 0.5)
+        # Create IMU message (already in ENU frame)
+        msg = Imu(
+            header=header,
+            orientation=orientation,
+            orientation_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+            angular_velocity=angular_vel,
+            angular_velocity_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+            linear_acceleration=linear_accel,
+            linear_acceleration_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+        )
 
-            q_w = cr * cp * cy + sr * sp * sy
-            q_x = sr * cp * cy - cr * sp * sy
-            q_y = cr * sp * cy + sr * cp * sy
-            q_z = cr * cp * sy - sr * sp * cy
+        self.imu_data.publish(msg)
 
-            logger.debug(f"Quaternion - x: {q_x:.3f}, y: {q_y:.3f}, z: {q_z:.3f}, w: {q_w:.3f}")
+        # Also publish raw IMU data (already in ENU frame)
+        raw_msg = Imu(
+            header=header,
+            orientation=Quaternion(x=0, y=0, z=0, w=1),  # No orientation for raw data
+            orientation_covariance=[-1, 0, 0, 0, 0, 0, 0, 0, 0],  # -1 means no orientation
+            angular_velocity=angular_vel,
+            angular_velocity_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+            linear_acceleration=linear_accel,
+            linear_acceleration_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+        )
 
-            # Create IMU message (already in ENU frame)
-            msg = Imu(
-                header=header,
-                orientation=Quaternion(x=q_x, y=q_y, z=q_z, w=q_w),
-                orientation_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
-                angular_velocity=Vector3(
-                    x=imu_data["angular_velocity"][0],
-                    y=imu_data["angular_velocity"][1],
-                    z=imu_data["angular_velocity"][2],
-                ),
-                angular_velocity_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
-                linear_acceleration=Vector3(
-                    x=imu_data["linear_acceleration"][0],
-                    y=imu_data["linear_acceleration"][1],
-                    z=imu_data["linear_acceleration"][2],
-                ),
-                linear_acceleration_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
-            )
-
-            self.imu_data.publish(msg)
-
-            # Also publish raw IMU data (already in ENU frame)
-            raw_msg = Imu(
-                header=header,
-                orientation=Quaternion(x=0, y=0, z=0, w=1),  # No orientation for raw data
-                orientation_covariance=[-1, 0, 0, 0, 0, 0, 0, 0, 0],  # -1 means no orientation
-                angular_velocity=Vector3(
-                    x=imu_data["angular_velocity"][0],
-                    y=imu_data["angular_velocity"][1],
-                    z=imu_data["angular_velocity"][2],
-                ),
-                angular_velocity_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
-                linear_acceleration=Vector3(
-                    x=imu_data["linear_acceleration"][0],
-                    y=imu_data["linear_acceleration"][1],
-                    z=imu_data["linear_acceleration"][2],
-                ),
-                linear_acceleration_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
-            )
-
-            self.imu_data_raw.publish(raw_msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing IMU data: {e}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        self.imu_data_raw.publish(raw_msg)
 
     def _publish_magnetic_field(self, timestamp: Time):
         """Publish magnetic field data."""
-        try:
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
+        # Create header
+        header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
 
-            # Get magnetic field data from ArduPilot interface
-            mag_data = self.ardupilot.magnetic_field
+        # Get magnetic field data from ArduPilot interface
+        mag_data = self.ardupilot.magnetic_field
 
-            # Create MagneticField message
-            msg = MagneticField(
-                header=header,
-                magnetic_field=Vector3(x=mag_data["x"], y=mag_data["y"], z=mag_data["z"]),
-                magnetic_field_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
-            )
+        # Create MagneticField message
+        msg = MagneticField(
+            header=header,
+            magnetic_field=Vector3(x=mag_data["x"], y=mag_data["y"], z=mag_data["z"]),
+            magnetic_field_covariance=[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
+        )
 
-            self.magnetic_field.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing magnetic field: {e}")
+        self.magnetic_field.publish(msg)
 
     def _publish_pressure_data(self, timestamp: Time):
         """Publish pressure data."""
@@ -1421,176 +1376,15 @@ class ArduPilotModule(Module):
         except Exception as e:
             logger.error(f"Error publishing battery data: {e}")
 
-    def _publish_local_pose(self, timestamp: Time):
-        """Publish local pose data."""
-        try:
-            # Check if pose outputs are available
-            if not self.local_pose:
-                logger.warning("local_pose output not available, skipping")
-                return
-            if not self.local_pose_cov:
-                logger.warning("local_pose_cov output not available, skipping")
-                return
-
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.local_frame_id)
-
-            # Get position and orientation data (already in ENU frame)
-            local_pos = self.ardupilot.local_position
-            orientation = self.ardupilot.orientation
-
-            # Convert Euler angles to quaternion (already in ENU frame)
-            roll, pitch, yaw = orientation["roll"], orientation["pitch"], orientation["yaw"]
-            cy = math.cos(yaw * 0.5)
-            sy = math.sin(yaw * 0.5)
-            cp = math.cos(pitch * 0.5)
-            sp = math.sin(pitch * 0.5)
-            cr = math.cos(roll * 0.5)
-            sr = math.sin(roll * 0.5)
-
-            q_w = cr * cp * cy + sr * sp * sy
-            q_x = sr * cp * cy - cr * sp * sy
-            q_y = cr * sp * cy + sr * cp * sy
-            q_z = cr * cp * sy - sr * sp * cy
-
-            # Create pose message (already in ENU frame)
-            pose = Pose(
-                position=Point(x=local_pos["x"], y=local_pos["y"], z=local_pos["z"]),
-                orientation=Quaternion(x=q_x, y=q_y, z=q_z, w=q_w),
-            )
-
-            msg = PoseStamped(header=header, pose=pose)
-            self.local_pose.publish(msg)
-
-            # Also publish pose with covariance
-            self.local_pose_cov.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing local pose: {e}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
-    def _publish_local_velocity(self, timestamp: Time):
-        """Publish local velocity data."""
-        try:
-            # Check if velocity outputs are available
-            if not self.local_velocity:
-                logger.warning("local_velocity output not available, skipping")
-                return
-            if not self.local_velocity_body:
-                logger.warning("local_velocity_body output not available, skipping")
-                return
-            if not self.local_velocity_body_cov:
-                logger.warning("local_velocity_body_cov output not available, skipping")
-                return
-
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.local_frame_id)
-
-            # Get velocity data
-            velocity = self.ardupilot.velocity
-            angular_velocity = self.ardupilot.angular_velocity
-
-            # Create twist message (already in ENU frame)
-            twist = Twist(
-                linear=Vector3(x=velocity["vx"], y=velocity["vy"], z=velocity["vz"]),
-                angular=Vector3(
-                    x=angular_velocity["rollspeed"],
-                    y=angular_velocity["pitchspeed"],
-                    z=angular_velocity["yawspeed"],
-                ),
-            )
-
-            msg = TwistStamped(header=header, twist=twist)
-
-            # Publish with error handling for each output
-            try:
-                self.local_velocity.publish(msg)
-            except Exception as e:
-                if "Resource temporarily unavailable" in str(e):
-                    logger.debug(f"Temporary resource issue with local_velocity: {e}")
-                else:
-                    logger.error(f"Error publishing local_velocity: {e}")
-
-            try:
-                self.local_velocity_body.publish(msg)
-            except Exception as e:
-                if "Resource temporarily unavailable" in str(e):
-                    logger.debug(f"Temporary resource issue with local_velocity_body: {e}")
-                else:
-                    logger.error(f"Error publishing local_velocity_body: {e}")
-
-            try:
-                self.local_velocity_body_cov.publish(msg)
-            except Exception as e:
-                if "Resource temporarily unavailable" in str(e):
-                    logger.debug(f"Temporary resource issue with local_velocity_body_cov: {e}")
-                else:
-                    logger.error(f"Error publishing local_velocity_body_cov: {e}")
-
-        except Exception as e:
-            logger.error(f"Error publishing local velocity: {e}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
-    def _publish_local_accel(self, timestamp: Time):
-        """Publish local acceleration data."""
-        try:
-            # Check if local_accel output is available
-            if not self.local_accel:
-                logger.warning("local_accel output not available, skipping")
-                return
-
-            # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
-
-            # Get acceleration data from IMU
-            imu_data = self.ardupilot.imu_data
-            angular_velocity = self.ardupilot.angular_velocity
-
-            # Create acceleration message with both linear and angular acceleration
-            accel = Accel(
-                linear=Vector3(
-                    x=imu_data["linear_acceleration"][0],
-                    y=imu_data["linear_acceleration"][1],
-                    z=imu_data["linear_acceleration"][2],
-                ),
-                angular=Vector3(
-                    x=angular_velocity["rollspeed"],
-                    y=angular_velocity["pitchspeed"],
-                    z=angular_velocity["yawspeed"],
-                ),
-            )
-
-            msg = AccelStamped(header=header, accel=accel)
-            self.local_accel.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing local acceleration: {e}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
     def _publish_gps_satellites(self, timestamp: Time):
         """Publish GPS satellites count."""
-        try:
-            # Check if GPS satellites output is available
-            if not self.gps_satellites:
-                logger.warning("gps_satellites output not available, skipping")
-                return
+        # Get GPS status from ArduPilot interface
+        gps_status = self.ardupilot.gps_status
 
-            # Get GPS status from ArduPilot interface
-            gps_status = self.ardupilot.gps_status
+        # Create UInt16 message with satellite count
+        msg = UInt16(data=gps_status["satellites"])
 
-            # Create UInt16 message with satellite count
-            msg = UInt16(data=gps_status["satellites"])
-
-            self.gps_satellites.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing GPS satellites: {e}")
+        self.gps_satellites.publish(msg)
 
     def _publish_diagnostics(self, timestamp: Time):
         """Publish diagnostics data."""
@@ -1735,9 +1529,8 @@ def main():
         module.battery.transport = core.LCMTransport("/mavros/battery", BatteryState)
 
         # Position outputs
-        module.local_pose.transport = core.LCMTransport("/mavros/local_position/pose", PoseStamped)
         module.local_pose_cov.transport = core.LCMTransport(
-            "/mavros/local_position/pose_cov", PoseStamped
+            "/mavros/local_pos/pose", PoseWithCovarianceStamped
         )
         module.local_velocity.transport = core.LCMTransport(
             "/mavros/local_position/velocity", TwistStamped
@@ -1747,9 +1540,6 @@ def main():
         )
         module.local_velocity_body_cov.transport = core.LCMTransport(
             "/mavros/local_position/vel_body_cov", TwistStamped
-        )
-        module.local_accel.transport = core.LCMTransport(
-            "/mavros/local_position/accel", AccelStamped
         )
 
         # Status outputs
