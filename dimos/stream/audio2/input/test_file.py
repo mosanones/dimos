@@ -42,7 +42,7 @@ def test_file_input_completes():
 
     # Subscribe and wait with run() - blocks until completion
     file_input(
-        file_path=str(get_data("out_of_date.wav")),
+        file_path=str(get_data("audio_bender") / "out_of_date.wav"),
         realtime=False,  # Fast playback for testing
     ).pipe(ops.do_action(on_next=on_next, on_completed=on_completed)).run()
 

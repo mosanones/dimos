@@ -21,27 +21,52 @@ import pytest
 
 from dimos.stream.audio2.input.file import file_input
 from dimos.stream.audio2.input.signal import WaveformType, signal
+from dimos.stream.audio2.operators import normalizer, vumeter
 from dimos.stream.audio2.output.network import network_output
 from dimos.stream.audio2.types import AudioFormat, AudioSpec
 from dimos.utils.data import get_data
 
+host = "10.0.0.191"
 
-def test_network_output_to_server():
-    """Test streaming to actual server (requires manual setup)."""
+
+def test_network_output_to_server_signal():
+    """Test streaming to actual server with a robotic melody (requires manual setup)."""
 
     # To run this test:
     # 1. Start the server: ./gstreamer_scripts/gstreamer.sh
-    # 2. Run this test with: pytest test_network.py::test_network_output_to_server
+    # 2. Run this test with: pytest test_network.py::test_network_output_to_server_signal
 
-    duration = 3.0
-    signal(
-        waveform=WaveformType.SINE,
-        frequency=440.0,
-        volume=0.5,
-        duration=duration,
-        output=AudioSpec(format=AudioFormat.PCM_F32LE),
-    ).pipe(network_output(host="127.0.0.1", port=5002, codec="opus", queue_size=25)).run()
+    from reactivex import concat
 
+    # Simple robotic melody: C-E-G-C-G-E-C (arpeggio)
+    # Note frequencies: C4=261.63, E4=329.63, G4=392.00, C5=523.25
+    base_len = 0.2
+    melody_notes = [
+        (261.63, base_len),  # C4
+        (329.63, base_len),  # E4
+        (392.00, base_len),  # G4
+        (523.25, base_len),  # C5
+        (392.00, base_len),  # G4
+        (329.63, base_len),  # E4
+        (261.63, base_len * 2),  # C4 (longer)
+    ]
+
+    # Build list of signal observables
+    notes = [
+        signal(
+            waveform=WaveformType.SAW,
+            frequency=freq,
+            volume=0.4,
+            duration=dur,
+            output=AudioSpec(format=AudioFormat.PCM_F32LE),
+        )
+        for freq, dur in melody_notes
+    ]
+
+    # Concatenate all notes into a melody
+    concat(*notes).pipe(network_output(host=host, port=5002, codec="opus")).run()
+
+    time.sleep(0.1)
     # .run() blocks until streaming completes (sync=True paces packets at real-time)
     # No manual sleep needed
 
@@ -54,9 +79,15 @@ def test_network_output_to_server_file():
     # 2. Run this test with: pytest test_network.py::test_network_output_to_server_file
 
     file_input(
-        file_path=str(get_data("audio_bender") / "perfection.wav"),
+        file_path=str(get_data("audio_bender") / "out_of_date.wav"),
         realtime=False,  # Fast playback for testing
-    ).pipe(network_output(host="10.0.0.191", port=5002, codec="opus")).run()
+    ).pipe(
+        normalizer(),
+        vumeter(),
+        network_output(host=host, port=5002, codec="opus"),
+    ).run()
+
+    time.sleep(0.1)
 
     # .run() blocks until streaming completes (sync=True paces packets at real-time)
     # No manual sleep needed

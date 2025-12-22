@@ -268,11 +268,17 @@ class GStreamerNormalizer(GStreamerPipelineBase):
                     channels=self._output_channels,
                 )
 
+                # Extract timestamp from buffer PTS (preserve timing from input)
+                buffer_timestamp = None
+                if buffer.pts != Gst.CLOCK_TIME_NONE:
+                    buffer_timestamp = buffer.pts / Gst.SECOND
+
                 event = buffer_to_audio_event(
                     buffer=buffer,
                     spec=output_spec,
                     detected_rate=self._output_rate,
                     detected_channels=self._output_channels,
+                    timestamp=buffer_timestamp,
                 )
 
                 buffer_count += 1
@@ -337,8 +343,14 @@ class GStreamerNormalizer(GStreamerPipelineBase):
                     self._running = False
                     if self._pull_thread:
                         self._pull_thread.join(timeout=2.0)
-                    observer.on_completed()
+
+                    # Cleanup pipeline BEFORE calling observer.on_completed()
+                    # This releases the mainloop reference so downstream operators
+                    # (like network_output) can finish their EOS processing
                     self._cleanup_pipeline()
+
+                    # Now notify observer
+                    observer.on_completed()
 
                 source.subscribe(on_next, on_error, on_completed, scheduler=scheduler)
 
