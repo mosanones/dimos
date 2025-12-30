@@ -542,7 +542,7 @@ class ZEDModule(Module):
         camera_id: int = 0,
         resolution: str = "HD720",
         depth_mode: str = "NEURAL",
-        fps: int = 30,
+        fps: int = 15,
         enable_tracking: bool = True,
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,

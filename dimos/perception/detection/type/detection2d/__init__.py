@@ -16,10 +16,12 @@ from dimos.perception.detection.type.detection2d.base import Detection2D, Filter
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 __all__ = [
     "Detection2D",
     "Detection2DBBox",
     "Detection2DPerson",
+    "Detection2DSeg",
     "ImageDetections2D",
 ]

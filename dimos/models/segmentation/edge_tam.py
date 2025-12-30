@@ -1,0 +1,268 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from pathlib import Path
+import shutil
+
+import cv2
+import numpy as np
+from omegaconf import OmegaConf
+import torch
+from PIL import Image as PILImage
+from hydra.utils import instantiate
+from sam2.sam2_video_predictor import SAM2VideoPredictor
+from tqdm import tqdm
+
+from dimos.msgs.sensor_msgs import Image
+from dimos.perception.detection.detectors.types import Detector
+from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
+from dimos.utils.data import get_data
+from dimos.utils.gpu_utils import is_cuda_available
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.perception.detection.edgetam")
+
+
+# Monkey patch tqdm to be silent
+def silent_tqdm(*args, **kwargs):
+    kwargs['disable'] = True
+    return tqdm(*args, **kwargs)
+
+import sam2.sam2_video_predictor
+import sam2.utils.misc
+sam2.sam2_video_predictor.tqdm = silent_tqdm
+sam2.utils.misc.tqdm = silent_tqdm
+
+
+def _load_checkpoint(model, ckpt_path):
+    if ckpt_path is not None:
+        sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
+        missing_keys, unexpected_keys = model.load_state_dict(sd)
+        if missing_keys:
+            logger.error(missing_keys)
+            raise RuntimeError()
+        if unexpected_keys:
+            logger.error(unexpected_keys)
+            raise RuntimeError()
+        logger.info("Loaded checkpoint sucessfully")
+
+
+class EdgeTAMProcessor(Detector):
+    def __init__(
+        self,
+        model_path: str = "models_edgetam",
+        model_name: str = "edgetam.pt",
+        config_name: str = "edgetam.yaml",
+        device: str | None = None,
+    ) -> None:
+        self.checkpoint_path = get_data(model_path) / model_name
+        
+        current_dir = Path(__file__).parent
+        local_config_path = current_dir / "configs" / "edgetam.yaml"
+        
+        if not local_config_path.exists():
+            raise FileNotFoundError(f"EdgeTAM config not found at {local_config_path}")
+
+        if device:
+            self.device = device
+        elif is_cuda_available():
+            self.device = "cuda"
+            logger.info("Using CUDA for EdgeTAM")
+        else:
+            self.device = "cpu"
+            logger.info("Using CPU for EdgeTAM")
+
+        # Build model manually
+        cfg = OmegaConf.load(local_config_path)
+        
+        overrides = {
+            "model.sam_mask_decoder_extra_args.dynamic_multimask_via_stability": True,
+            "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_delta": 0.05,
+            "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_thresh": 0.98,
+            "model.binarize_mask_from_pts_for_mem_enc": True,
+            "model.fill_hole_area": 8,
+        }
+        
+        for key, value in overrides.items():
+            OmegaConf.update(cfg, key, value)
+            
+        logger.info("Instantiating EdgeTAM model...")
+        if cfg.model._target_ != "sam2.sam2_video_predictor.SAM2VideoPredictor":
+             logger.warning(f"Config target is {cfg.model._target_}, forcing SAM2VideoPredictor")
+             cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
+
+        self.predictor = instantiate(cfg.model, _recursive_=True)
+        
+        logger.info(f"Loading checkpoint from {self.checkpoint_path}")
+        _load_checkpoint(self.predictor, str(self.checkpoint_path))
+        
+        self.predictor = self.predictor.to(self.device)
+        self.predictor.eval()
+        logger.info("EdgeTAM model ready")
+
+        self.inference_state = None
+        self.frame_count = 0
+        self.temp_dir = Path("/tmp/dimos_edgetam_frames")
+        self.is_tracking = False
+        self.buffer_size = 100  # Keep last N frames in memory to avoid OOM
+
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+    def _prepare_frame(self, image: Image) -> torch.Tensor:
+        """Prepare frame for SAM2 (resize, normalize, convert to tensor)."""
+        cv_image = image.to_opencv()
+        rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        pil_image = PILImage.fromarray(rgb_image)
+        
+        img_np = np.array(pil_image.resize((self.predictor.image_size, self.predictor.image_size)))
+        img_np = img_np.astype(np.float32) / 255.0
+        
+        img_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
+        img_std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+        img_np -= img_mean
+        img_np /= img_std
+
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).float()
+        
+        if self.device == "cuda":
+            img_tensor = img_tensor.cuda()
+            
+        return img_tensor
+
+    def init_track(
+        self,
+        image: Image,
+        points: np.ndarray | None = None,
+        labels: np.ndarray | None = None,
+        box: np.ndarray | None = None,
+        obj_id: int = 1,
+    ) -> ImageDetections2D:
+        """Initialize tracking with a prompt (points or box)."""
+        # Reset state properly - we must ensure temp dir is clean
+        if self.inference_state is not None:
+            self.stop()
+            
+        # Re-create temp directory immediately
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+            
+        self.frame_count = 0
+        
+        frame_path = self.temp_dir / f"{self.frame_count:05d}.jpg"
+        image.save(str(frame_path))
+        
+        # Now we can safely init state with the fresh directory containing 1 frame
+        self.inference_state = self.predictor.init_state(video_path=str(self.temp_dir))
+        self.predictor.reset_state(self.inference_state)
+        
+        if torch.is_tensor(self.inference_state["images"]):
+            self.inference_state["images"] = [self.inference_state["images"][0]]
+        
+        self.is_tracking = True
+
+        if points is not None:
+            points = points.astype(np.float32)
+        if labels is not None:
+            labels = labels.astype(np.int32)
+        if box is not None:
+            box = box.astype(np.float32)
+
+        _, out_obj_ids, out_mask_logits = self.predictor.add_new_points_or_box(
+            inference_state=self.inference_state,
+            frame_idx=0,
+            obj_id=obj_id,
+            points=points,
+            labels=labels,
+            box=box,
+        )
+
+        return self._process_results(image, out_obj_ids, out_mask_logits)
+
+    def process_image(self, image: Image) -> ImageDetections2D:
+        """Process a new video frame and propagate tracking."""
+        if not self.is_tracking or self.inference_state is None:
+            return ImageDetections2D(image=image)
+
+        self.frame_count += 1
+        
+        # Append new frame to inference state
+        new_frame_tensor = self._prepare_frame(image)
+        self.inference_state["images"].append(new_frame_tensor)
+        self.inference_state["num_frames"] += 1
+        
+        # Memory management
+        cached_features = self.inference_state["cached_features"]
+        if len(cached_features) > self.buffer_size:
+            oldest_frame = min(cached_features.keys())
+            if oldest_frame < self.frame_count - self.buffer_size:
+                del cached_features[oldest_frame]
+                
+        if len(self.inference_state["images"]) > self.buffer_size + 10:
+             idx_to_drop = self.frame_count - self.buffer_size - 5
+             if idx_to_drop >= 0 and idx_to_drop < len(self.inference_state["images"]):
+                 if self.inference_state["images"][idx_to_drop] is not None:
+                     self.inference_state["images"][idx_to_drop] = None
+        
+        detections = ImageDetections2D(image=image)
+        
+        for out_frame_idx, out_obj_ids, out_mask_logits in self.predictor.propagate_in_video(
+            self.inference_state, 
+            start_frame_idx=self.frame_count, 
+            max_frame_num_to_track=1
+        ):
+            if out_frame_idx == self.frame_count:
+                 return self._process_results(image, out_obj_ids, out_mask_logits)
+                 
+        return detections
+
+    def _process_results(
+        self, image: Image, obj_ids: list[int], mask_logits: torch.Tensor | np.ndarray
+    ) -> ImageDetections2D:
+        detections = ImageDetections2D(image=image)
+
+        if len(obj_ids) == 0:
+            return detections
+
+        if isinstance(mask_logits, torch.Tensor):
+            mask_logits = mask_logits.cpu().numpy()
+
+        for i, obj_id in enumerate(obj_ids):
+            mask = mask_logits[i]
+            seg = Detection2DSeg.from_sam2_result(
+                mask=mask,
+                obj_id=obj_id,
+                image=image,
+                name="object",
+            )
+            
+            # Only add if valid (non-empty)
+            if seg.is_valid():
+                detections.detections.append(seg)
+
+        return detections
+
+    def stop(self) -> None:
+        self.is_tracking = False
+        self.inference_state = None
+        if self.temp_dir.exists():
+            try:
+                shutil.rmtree(self.temp_dir)
+            except OSError as e:
+                logger.warning(f"Failed to remove temp dir {self.temp_dir}: {e}")
