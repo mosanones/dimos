@@ -472,29 +472,9 @@ class RosRerunBridgeNode(Node):
                     ),
                 )
 
-            # Look up camera transform relative to base_link
-            try:
-                ros_time = Time.from_msg(msg.header.stamp)
-                tf = self.tf_buffer.lookup_transform(
-                    "base_link",
-                    "camera_color_optical_frame",
-                    ros_time,
-                    timeout=rclpy.duration.Duration(seconds=0.1),
-                )
-                t = tf.transform.translation
-                q_cam = tf.transform.rotation
-
-                with self._log_lock:
-                    self.rc.log(
-                        "world/robot/base/camera",
-                        rr.Transform3D(
-                            translation=[t.x, t.y, t.z],
-                            rotation=rr.Quaternion(xyzw=[q_cam.x, q_cam.y, q_cam.z, q_cam.w]),
-                        ),
-                    )
-            except (TransformException, Exception):
-                # TF not available yet or frame names don't match - not critical
-                pass
+            # Note: Camera is not part of the autonomy stack robot TF tree.
+            # It's a separate RealSense camera, so we don't try to look up camera→robot TF.
+            # Camera data is logged separately under /world/camera (not /world/robot/base/camera)
 
         except Exception as e:
             logger.error(f"[RosRerunBridge] Failed to log odometry: {e}", exc_info=True)

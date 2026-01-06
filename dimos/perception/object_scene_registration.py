@@ -695,15 +695,14 @@ class ObjectSceneRegistrationModule(Module):
         color_image = Image.from_numpy(cv_image)
         color_image.from_ros_header(color_msg.header)
 
-        # Rerun: log RGB image under proper TF hierarchy (world/robot/base/camera).
-        # Log camera intrinsics as Pinhole (static, only once)
+        # Rerun: log camera pose + intrinsics + RGB image
         if not hasattr(self, "_rerun_camera_intrinsics_logged"):
             try:
                 import rerun as rr  # type: ignore[import-not-found]
 
                 K = self._camera_info.K.reshape(3, 3)
                 self._rr_log(
-                    "/world/robot/base/camera",
+                    "/world/camera",
                     rr.Pinhole(
                         resolution=[self._camera_info.width, self._camera_info.height],
                         focal_length=[K[0, 0], K[1, 1]],
@@ -716,7 +715,7 @@ class ObjectSceneRegistrationModule(Module):
             except Exception:
                 pass
 
-        self._rr_log("/world/robot/base/camera/rgb", color_image.to_rerun())
+        self._rr_log("/world/camera/rgb", color_image.to_rerun())
 
         # Convert compressed depth image
         depth_image = self._convert_compressed_depth_image(depth_msg)
@@ -745,7 +744,7 @@ class ObjectSceneRegistrationModule(Module):
                 labels.append(f"{name} {conf:.2f}")
             if mins:
                 self._rr_log(
-                    "/world/robot/base/camera/rgb/detections2d",
+                    "/world/camera/rgb/detections2d",
                     rr.Boxes2D(mins=mins, sizes=sizes, labels=labels),
                 )
         except Exception:
@@ -773,7 +772,7 @@ class ObjectSceneRegistrationModule(Module):
         self._overlay_pub.publish(overlay_msg)
 
         # Rerun: log overlay image under camera.
-        self._rr_log("/world/robot/base/camera/overlay", overlay_image.to_rerun())
+        self._rr_log("/world/camera/overlay", overlay_image.to_rerun())
 
         # Process 3D detections
         self._process_3d_detections(detections_2d, color_image, depth_image, color_msg.header)
@@ -801,6 +800,26 @@ class ObjectSceneRegistrationModule(Module):
                     timeout=rclpy.duration.Duration(seconds=0.4),
                 )
                 camera_transform = Transform.from_ros_transform_stamped(ros_transform)
+                
+                # Rerun: log camera pose in world frame (makes camera visible on map)
+                try:
+                    import rerun as rr  # type: ignore[import-not-found]
+                    from scipy.spatial.transform import Rotation as R
+                    
+                    trans = camera_transform.translation
+                    rot_quat = camera_transform.rotation
+                    rot_matrix = R.from_quat([rot_quat.x, rot_quat.y, rot_quat.z, rot_quat.w]).as_matrix()
+                    
+                    self._rr_log(
+                        "/world/camera",
+                        rr.Transform3D(
+                            translation=[trans.x, trans.y, trans.z],
+                            mat3x3=rot_matrix
+                        )
+                    )
+                except Exception:
+                    pass
+                    
             except (
                 tf2_ros.LookupException,
                 tf2_ros.ConnectivityException,
@@ -997,14 +1016,17 @@ class ObjectSceneRegistrationModule(Module):
         mesh = trimesh.load(obj.mesh_path)
         logger.info(f"[Rerun] Mesh loaded: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
-        # Extract vertex colors (Rerun native support!)
+        # Extract vertex colors (DIRECT access like reference code)
+        vertex_colors = None
         try:
-            vertex_colors = mesh.visual.to_color().vertex_colors
-            logger.info(
-                f"[Rerun] Extracted vertex colors: shape={vertex_colors.shape if vertex_colors is not None else None}"
-            )
+            # Reference code uses mesh.visual.vertex_colors DIRECTLY, not to_color()
+            if hasattr(mesh.visual, 'vertex_colors'):
+                vertex_colors = mesh.visual.vertex_colors
+                logger.info(f"[Rerun] Direct vertex_colors: shape={vertex_colors.shape}, dtype={vertex_colors.dtype}")
+            else:
+                logger.warning(f"[Rerun] mesh.visual has no vertex_colors attribute")
         except Exception as e:
-            logger.warning(f"[Rerun] Failed to extract vertex colors: {e}")
+            logger.warning(f"[Rerun] Failed to extract vertex colors: {e}", exc_info=True)
             vertex_colors = None
 
         # Prepare pose
