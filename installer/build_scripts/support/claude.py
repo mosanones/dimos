@@ -71,7 +71,7 @@ async def run_claude_named_prompts(
                 results[idx] = proc.returncode
             finally:
                 log_file.close()
-            print(f"finished: {name}")
+            print(f"finished: ✅ {name}")
 
     tasks = [
         asyncio.create_task(runner(idx, name, prompt))

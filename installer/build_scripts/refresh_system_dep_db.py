@@ -13,114 +13,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generates a .json of system dependencies for every pip module in the project.toml file"""
+"""
+Uses Claude to generate a mapping (dep_db) from a pip package name to system-dependencies for that package
+
+!IMPORTANT Notes!
+- The answers do not need to be perfect, they just make the user-install more smooth the more accurate they are
+- The answers are validated to make sure those package names actually exist
+- Once the values have been calculated they are cached (claude is only needed for new pip dependencies)
+- The output can be hand-edited without claude overwriting the edits
+"""
 
 import argparse
 import asyncio
 import json
 from pathlib import Path
-import re
-import shutil
 import sys
 
+from support.build_help import (
+    DEP_LIST_KEYS,
+    DISTRIBUTED_DEP_DB_DIR,
+    REQUIRED_KEYS,
+    consolidate_and_validate_distributed_deps,
+    existing_entry_is_complete,
+    get_pip_deps_from_pyproject,
+    normalize_pip_requirement,
+    unconsolidate_deps,
+)
 from support.claude import run_claude_named_prompts
 
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore
-
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
-PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
-DEP_DB_DIR = REPO_ROOT / "installer" / "dep_database"
-
-DEP_LIST_KEYS = ["apt_dependencies", "brew_dependencies", "nix_dependencies"]
-REQUIRED_KEYS = ["package", *DEP_LIST_KEYS]
-
-
-def _normalize_requirement(requirement: str) -> str:
-    """
-    Strip version markers and normalize case.
-
-    Example:
-        >>> _normalize_requirement("Torch>=2.0; python_version>='3.9'")
-        'torch'
-    """
-    return re.sub(r"[=>,;].+", "", requirement).strip().lower()
-
-
-async def _run_cmd(*args: str) -> tuple[int, str, str]:
-    """
-    Run a command asynchronously and return (code, stdout, stderr).
-
-    Example:
-        >>> asyncio.run(_run_cmd("echo", "hi"))
-        (0, 'hi', '')
-    """
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    return proc.returncode, stdout.decode().strip(), stderr.decode().strip()
-
-
-async def _project_root() -> Path:
-    """
-    Resolve the git repository root.
-
-    Example:
-        >>> asyncio.run(_project_root())  # doctest: +ELLIPSIS
-        PosixPath('.../dimos')
-    """
-    code, stdout, stderr = await _run_cmd("git", "rev-parse", "--show-toplevel")
-    if code != 0:
-        raise RuntimeError(f"git rev-parse failed: {stderr or stdout}")
-    return Path(stdout)
-
-
-async def _load_dependencies() -> list[str]:
-    """
-    Load dependency lists from pyproject.toml.
-
-    Example:
-        >>> deps = asyncio.run(_load_dependencies())
-        >>> isinstance(deps, list)
-        True
-    """
-    raw = await asyncio.to_thread(PYPROJECT_PATH.read_bytes)
-    data = tomllib.loads(raw.decode())
-    project = data.get("project", {})
-    deps = list(project.get("dependencies", []))
-    for _, extras in project.get("optional-dependencies", {}).items():
-        deps.extend(extras)
-    return deps
-
-
-async def _existing_entry_is_complete(path: Path) -> bool:
-    """
-    Check whether a dep_database entry has all required keys.
-
-    Example:
-        >>> tmp = DEP_DB_DIR / "_example.json"
-        >>> tmp.write_text('{"package":"foo","apt_dependencies":[],"brew_dependencies":[],"nix_dependencies":[]}')
-        >>> asyncio.run(_existing_entry_is_complete(tmp))
-        True
-    """
-    try:
-        raw = await asyncio.to_thread(path.read_text)
-        obj = json.loads(raw)
-    except Exception:
-        return False
-
-    overlap = set(obj.keys()) & set(REQUIRED_KEYS)
-    if len(overlap) != len(REQUIRED_KEYS):
-        return False
-    return all(isinstance(obj.get(key), list) for key in DEP_LIST_KEYS)
-
+DEFAULT_CONCURRENT_CLAUDE_REQUESTS = 5
 
 def _build_prompt(name: str, requirement: str) -> str:
     """
@@ -136,13 +57,11 @@ def _build_prompt(name: str, requirement: str) -> str:
         f"list all apt-get dependencies, nix, and brew dependencies for the {requirement} "
         f"pip module. The result should be a json object with the following {key_list} "
         f'and optionally "description", "notes". These ({dep_keys}) should be list of '
-        f"strings. Store that resulting json inside ./installer/dep_database/{name}.json"
+        f"strings. Store that resulting json inside {DISTRIBUTED_DEP_DB_DIR}/{name}.json"
     )
 
 
-async def _gather_prompts(
-    project_dir: Path, dependencies: list[str]
-) -> tuple[list[tuple[str, str]], list[str]]:
+async def _gather_prompts(dependencies: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
     """
     Build prompts for deps that are missing or incomplete.
 
@@ -154,23 +73,22 @@ async def _gather_prompts(
     missing: list[str] = []
 
     for requirement in dependencies:
-        name = _normalize_requirement(requirement)
+        name = normalize_pip_requirement(requirement)
         if name.startswith("types-") or name.endswith("-stubs") or name.startswith("pytest-"):
             continue
 
-        dest_path = project_dir / "installer" / "dep_database" / f"{name}.json"
+        dest_path = DISTRIBUTED_DEP_DB_DIR / f"{name}.json"
         if not dest_path.exists():
             missing.append(name)
             prompts.append((name, _build_prompt(name, requirement)))
             continue
 
-        if await _existing_entry_is_complete(dest_path):
+        if await existing_entry_is_complete(dest_path):
             continue
 
         prompts.append((name, _build_prompt(name, requirement)))
 
     return prompts, missing
-
 
 async def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -182,9 +100,13 @@ async def main(argv: list[str]) -> None:
     parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
-    project_dir = await _project_root()
-    dependencies = await _load_dependencies()
-    prompts, missing = await _gather_prompts(project_dir, dependencies)
+    await unconsolidate_deps()
+    dependencies = await get_pip_deps_from_pyproject()
+    prompts, missing = await _gather_prompts(dependencies)
+    tools_to_ask_about = [ each[0] for each in prompts ]
+    print("asking claude about:")
+    for tool in tools_to_ask_about:
+        print("- "+tool)
 
     list_only = args.dry_run or bool(args.extra)
     if list_only:
@@ -206,6 +128,10 @@ async def main(argv: list[str]) -> None:
         max_concurrent=max(args.max_concurrent, 1),
         log_dir=Path(args.log_dir),
     )
+
+    print()
+    print("All data gathered; now validating and consolidating")
+    consolidate_and_validate_distributed_deps()
 
 
 if __name__ == "__main__":
