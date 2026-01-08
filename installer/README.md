@@ -1,16 +1,16 @@
-# How do I change something in the installer?
+# How can I find+change the thing I care about in the installer?
 
-There are 5 phases, all those are called from `__main__.py` start there
+There are 5 phases, all those are called from `__main__.py`: start there.
 
-The same script is used for the user-interactive install, the non-interactive install (e.g. the inside of docker), and the template repo setup -- because all of them have tons of overlap.
+The same script (e.g. `installer/__main__.py`) is used for the user-interactive install, the non-interactive install (e.g. the inside of docker), and the template repo setup -- because all of them have tons of overlap.
 
 - phase0: ask the user what features they want (pick native install, docker setup, or nix flake setup)
-- phase1: native install (if chosen or within docker)
+- phase1: native install (if chosen or if inside of docker)
 - phase2: check for vital system dependencies
-- phase3: install dimos via pip
-- phase4: dimos check
+- phase3: install dimos via `uv pip install dimos[<features>]`
+- phase4: dimos sanity checks
 
-The python installer is bootstrapped from a shell based installer which is under `bin/install`
+The python installer is bootstrapped from a shell based installer which is under `bin/install` (more details on bootstrapping below if that is what you're interested in)
 
 # How do I test my changes to the installer?
 
