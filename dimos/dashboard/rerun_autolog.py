@@ -26,10 +26,12 @@ This helper exists only as a small convenience for dashboard-layer code.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = setup_logger()
 

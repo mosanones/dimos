@@ -22,17 +22,19 @@ Strict separation:
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import rerun as rr
 
 from dimos.core import In, Module, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.std_msgs import Float32
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.nav_msgs import OccupancyGrid
+    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.std_msgs import Float32
 
 logger = setup_logger()
 
@@ -92,21 +94,51 @@ class RerunLoggerModule(Module):
         if not self._global_config.viewer_backend.startswith("rerun"):
             return
 
-        connect_rerun(global_config=self._global_config, server_addr=self._global_config.rerun_server_addr)
+        connect_rerun(
+            global_config=self._global_config, server_addr=self._global_config.rerun_server_addr
+        )
 
         # Visuals
         self._disposables.add(self.global_map.observable().subscribe(self._on_global_map))  # type: ignore[no-untyped-call]
         self._disposables.add(self.global_costmap.observable().subscribe(self._on_global_costmap))  # type: ignore[no-untyped-call]
 
         # Metrics (Float32.to_rerun is trivial)
-        self._disposables.add(self.costmap_calc_ms.observable().subscribe(lambda m: rr.log("metrics/costmap/calc_ms", m.to_rerun())))  # type: ignore[no-untyped-call]
-        self._disposables.add(self.costmap_latency_ms.observable().subscribe(lambda m: rr.log("metrics/costmap/latency_ms", m.to_rerun())))  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.costmap_calc_ms.observable().subscribe(
+                lambda m: rr.log("metrics/costmap/calc_ms", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.costmap_latency_ms.observable().subscribe(
+                lambda m: rr.log("metrics/costmap/latency_ms", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
 
-        self._disposables.add(self.voxel_extract_ms.observable().subscribe(lambda m: rr.log("metrics/voxel_map/extract_ms", m.to_rerun())))  # type: ignore[no-untyped-call]
-        self._disposables.add(self.voxel_transport_ms.observable().subscribe(lambda m: rr.log("metrics/voxel_map/transport_ms", m.to_rerun())))  # type: ignore[no-untyped-call]
-        self._disposables.add(self.voxel_publish_ms.observable().subscribe(lambda m: rr.log("metrics/voxel_map/publish_ms", m.to_rerun())))  # type: ignore[no-untyped-call]
-        self._disposables.add(self.voxel_latency_ms.observable().subscribe(lambda m: rr.log("metrics/voxel_map/latency_ms", m.to_rerun())))  # type: ignore[no-untyped-call]
-        self._disposables.add(self.voxel_count.observable().subscribe(lambda m: rr.log("metrics/voxel_map/voxel_count", m.to_rerun())))  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.voxel_extract_ms.observable().subscribe(
+                lambda m: rr.log("metrics/voxel_map/extract_ms", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.voxel_transport_ms.observable().subscribe(
+                lambda m: rr.log("metrics/voxel_map/transport_ms", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.voxel_publish_ms.observable().subscribe(
+                lambda m: rr.log("metrics/voxel_map/publish_ms", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.voxel_latency_ms.observable().subscribe(
+                lambda m: rr.log("metrics/voxel_map/latency_ms", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
+        self._disposables.add(
+            self.voxel_count.observable().subscribe(
+                lambda m: rr.log("metrics/voxel_map/voxel_count", m.to_rerun())
+            )
+        )  # type: ignore[no-untyped-call]
 
         logger.info("RerunLoggerModule started")
 
@@ -144,5 +176,3 @@ class RerunLoggerModule(Module):
 
 
 rerun_logger = RerunLoggerModule.blueprint
-
-

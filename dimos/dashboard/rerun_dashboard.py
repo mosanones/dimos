@@ -24,14 +24,16 @@ Responsibilities:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import rerun as rr
 import rerun.blueprint as rrb
 
-from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun, init_rerun_server
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.global_config import GlobalConfig
 
 logger = setup_logger()
 
@@ -120,5 +122,3 @@ def send_global_blueprint(global_config: GlobalConfig) -> None:
     )
 
     rr.send_blueprint(blueprint)
-
-

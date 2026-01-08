@@ -17,9 +17,8 @@
 
 from typing import Any, ClassVar
 
-import rerun as rr
-
 from dimos_lcm.std_msgs import Float32 as LCMFloat32
+import rerun as rr
 
 
 class Float32(LCMFloat32):  # type: ignore[misc]
@@ -32,5 +31,3 @@ class Float32(LCMFloat32):  # type: ignore[misc]
 
     def to_rerun(self) -> Any:
         return rr.Scalars(self.data)
-
-
