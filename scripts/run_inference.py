@@ -26,7 +26,8 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 
 
 ACTION_HORIZON = 15
-
+ACTION_CHUNK = None
+GRIPPER_CHUNK = None
 
 def get_camera_image(timeout: float = 5.0, topic: str = "/camera/color") -> np.ndarray:
     event = threading.Event()
@@ -51,7 +52,14 @@ def get_camera_image(timeout: float = 5.0, topic: str = "/camera/color") -> np.n
 
     return image_data["image"]
 
-
+def get_observation():
+    return {
+        "observation/exterior_image_1_left": get_camera_image(), # ADD SECOND CAMERA IN BLUEPRINT DEFINED WITH SERIAL NUMBER
+        "observation/wrist_image_left": get_camera_image(),
+        "observation/joint_position": xarm_to_franka(arm.get_servo_angle()[1]),
+        "observation/gripper_position": 0.0,
+        "prompt": "move the arm slightly to the left",
+    }
 
 def franka_to_xarm(franka_joint_positions):
     offsets = np.array([0, 0, 0, 180, 0, 180, 0])
@@ -62,45 +70,45 @@ def xarm_to_franka(xarm_joint_positions):
     return offsets + xarm_joint_positions
 
 
-def get_observation():
-    return {
-        "observation/exterior_image_1_left": get_camera_image(),
-        "observation/wrist_image_left": get_camera_image(),
-        "observation/joint_position": xarm_to_franka(arm.get_servo_angle()[1]),
-        "observation/gripper_position": 0.0,
-        "prompt": "move the arm slightly to the left",
-    }
-
 def run_inference():
     """
     Run inference loop until user interrupts
     """
     actions_from_chunk_completed = 0
     while True:
-        if actions_from_chunk_completed == ACTION_HORIZON:
+        if actions_from_chunk_completed == 0 or actions_from_chunk_completed >= ACTION_HORIZON:
             actions_from_chunk_completed = 0
             observation = get_observation()
+
             result = policy.infer(observation)
             action_chunk = result["actions"]  # Shape: (15, 8) - these are VELOCITY COMMANDS
+
             dt = 1.0 / 15.0
             action_chunk = action_chunk.copy()
             action_chunk[:, :-1] *= dt
             action_chunk[:, :-1] = np.cumsum(
                 action_chunk[:, :-1], axis=0
             )  # integrate to get delta position in radians
-            current_joint_positions = arm.get_servo_angle()
+            current_joint_positions = np.array(arm.get_servo_angle()[1])
             action_chunk[:, :-1] += current_joint_positions
             action_chunk[:, :-1] *= 360 / (2 * np.pi)  # convert to degrees
-            actions_from_chunk_completed += 1
+            ACTION_CHUNK = action_chunk
+            GRIPPER_CHUNK = action_chunk[:, 7]
+            GRIPPER_CHUNK = np.where(GRIPPER_CHUNK > 0.5, 0.0, GRIPPER_CHUNK)
 
+        action = ACTION_CHUNK[actions_from_chunk_completed]
+        gripper_xarm = (1.0 - GRIPPER_CHUNK[actions_from_chunk_completed]) * 850
         actions_from_chunk_completed += 1
 
+        print(f"Setting joint positions: {action[:7]} and gripper position: {gripper_xarm}")
+        arm.set_servo_angle(angle=action[:7], speed=10, wait=False)
+        # arm.set_gripper_position(pos=gripper_xarm, speed=50, wait=False)
 
 if __name__ == "__main__":
     # connect to policy server
     policy = websocket_client_policy.WebsocketClientPolicy(
-        host="localhost",  # Docker host gateway (server running on host machine)
-        port=8000,  # default port
+        host="localhost",
+        port=8000,
     )
 
     # connect to xArm
@@ -110,34 +118,10 @@ if __name__ == "__main__":
     arm.set_mode(0)
     arm.set_state(state=0)
     time.sleep(1)
-
-    print(f"arm.get_servo_angle(): {arm.get_servo_angle()}")
-
     arm.move_gohome(wait=True)
-    print(f"arm.get_servo_angle(): {arm.get_servo_angle()}")
 
     observation = get_observation()
 
-    result = policy.infer(observation)
-    action_chunk = result["actions"]  # Shape: (15, 8) - these are VELOCITY COMMANDS
-    print(action_chunk[0])
-
-    dt = 1.0 / 15.0
-    action_chunk = action_chunk.copy()
-    action_chunk[:, :-1] *= dt
-    action_chunk[:, :-1] = np.cumsum(
-        action_chunk[:, :-1], axis=0
-    )  # integrate to get delta position in radians
-    action_chunk[:, :-1] *= 360 / (2 * np.pi)  # convert to degrees
-
-    gripper_value = action_chunk[:, 7]
-    gripper_value = np.where(gripper_value > 0.5, 0.0, gripper_value)
-    gripper_xarm = (1.0 - gripper_value) * 850
-
-    # send commands to xArm
-    for i in range(len(action_chunk)):
-        print(f"Joint positions: {action_chunk[i, :7]} Gripper position: {gripper_xarm[i]}")
-        arm.set_servo_angle(angle=action_chunk[i, :7], speed=50, wait=False)
-        # arm.set_gripper_position(pos=gripper_xarm[i], speed=50, wait=False)
+    run_inference()
 
     arm.disconnect()
