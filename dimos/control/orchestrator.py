@@ -36,13 +36,15 @@ from dimos.control.hardware_interface import BackendHardwareInterface, HardwareI
 from dimos.control.tick_loop import TickLoop
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.msgs.sensor_msgs import (
+    JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
+)
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.control.task import ControlTask
     from dimos.hardware.manipulators.spec import ManipulatorBackend
-    from dimos.msgs.sensor_msgs import JointState
 
 logger = setup_logger()
 
