@@ -441,14 +441,14 @@ def interactive_mode(setter: DualTrajectorySetter) -> None:
 
             elif cmd == "vel" and len(parts) >= 3:
                 arm_name = parts[1].lower()
-                a: ArmState | None = (
+                target_arm: ArmState | None = (
                     left
                     if arm_name in ("left", "l")
                     else right
                     if arm_name in ("right", "r")
                     else None
                 )
-                if a is None or a.generator is None:
+                if target_arm is None or target_arm.generator is None:
                     print("  Usage: vel left|right <value>")
                     continue
                 try:
@@ -456,9 +456,9 @@ def interactive_mode(setter: DualTrajectorySetter) -> None:
                     if vel <= 0:
                         print("  Velocity must be positive")
                     else:
-                        a.generator.set_limits(vel, a.generator.max_acceleration)
-                        a.generated_trajectory = None
-                        print(f"  {a.name.upper()} max velocity: {vel:.2f} rad/s")
+                        target_arm.generator.set_limits(vel, target_arm.generator.max_acceleration)
+                        target_arm.generated_trajectory = None
+                        print(f"  {target_arm.name.upper()} max velocity: {vel:.2f} rad/s")
                 except ValueError:
                     print("  Invalid velocity value")
 
