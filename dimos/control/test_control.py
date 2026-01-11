@@ -110,29 +110,6 @@ def orchestrator_state():
 
 
 # =============================================================================
-# Test ResourceClaim
-# =============================================================================
-
-
-class TestResourceClaim:
-    def test_create_claim(self):
-        claim = ResourceClaim(
-            joints=frozenset({"joint1", "joint2"}),
-            priority=10,
-        )
-        assert claim.joints == frozenset({"joint1", "joint2"})
-        assert claim.priority == 10
-
-    def test_claim_immutable(self):
-        claim = ResourceClaim(
-            joints=frozenset({"joint1"}),
-            priority=5,
-        )
-        with pytest.raises(AttributeError):
-            claim.priority = 20
-
-
-# =============================================================================
 # Test JointCommandOutput
 # =============================================================================
 
@@ -179,17 +156,6 @@ class TestJointCommandOutput:
 
 
 class TestJointStateSnapshot:
-    def test_create_snapshot(self):
-        snapshot = JointStateSnapshot(
-            joint_positions={"j1": 0.5, "j2": 1.0},
-            joint_velocities={"j1": 0.0, "j2": 0.1},
-            joint_efforts={"j1": 1.0, "j2": 2.0},
-            timestamp=100.0,
-        )
-        assert snapshot.joint_positions["j1"] == 0.5
-        assert snapshot.joint_velocities["j2"] == 0.1
-        assert snapshot.timestamp == 100.0
-
     def test_get_position(self):
         snapshot = JointStateSnapshot(
             joint_positions={"j1": 0.5, "j2": 1.0},

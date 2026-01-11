@@ -132,8 +132,7 @@ class BackendHardwareInterface:
 
     def disconnect(self) -> None:
         """Disconnect the underlying backend."""
-        if hasattr(self._backend, "disconnect"):
-            self._backend.disconnect()
+        self._backend.disconnect()
 
     def read_state(self) -> dict[str, tuple[float, float, float]]:
         """Read state as {joint_name: (position, velocity, effort)}.

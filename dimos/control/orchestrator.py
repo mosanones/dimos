@@ -464,6 +464,8 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
             logger.warning("Orchestrator already running")
             return
 
+        super().start()
+
         # Setup hardware and tasks from config (if any)
         if self.config.hardware or self.config.tasks:
             self._setup_from_config()
@@ -483,8 +485,6 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
         )
         self._tick_loop.start()
 
-        # Only mark as started after everything succeeds
-        super().start()
         logger.info(f"ControlOrchestrator started at {self.config.tick_rate}Hz")
 
     @rpc
@@ -497,7 +497,7 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
 
         # Disconnect all hardware backends
         with self._hardware_lock:
-            for hw_id, interface in list(self._hardware.items()):
+            for hw_id, interface in self._hardware.items():
                 try:
                     interface.disconnect()
                     logger.info(f"Disconnected hardware {hw_id}")

@@ -96,7 +96,8 @@ class TickLoop:
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
-        self._running = False
+        self._stop_event = threading.Event()
+        self._stop_event.set()  # Initially stopped
         self._tick_thread: threading.Thread | None = None
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
@@ -109,15 +110,15 @@ class TickLoop:
     @property
     def is_running(self) -> bool:
         """Whether the tick loop is currently running."""
-        return self._running
+        return not self._stop_event.is_set()
 
     def start(self) -> None:
         """Start the tick loop in a daemon thread."""
-        if self._running:
+        if not self._stop_event.is_set():
             logger.warning("TickLoop already running")
             return
 
-        self._running = True
+        self._stop_event.clear()
         self._last_tick_time = time.perf_counter()
         self._tick_count = 0
 
@@ -131,7 +132,7 @@ class TickLoop:
 
     def stop(self) -> None:
         """Stop the tick loop."""
-        self._running = False
+        self._stop_event.set()
         if self._tick_thread and self._tick_thread.is_alive():
             self._tick_thread.join(timeout=2.0)
         logger.info("TickLoop stopped")
@@ -140,7 +141,7 @@ class TickLoop:
         """Main control loop - deterministic read → compute → arbitrate → write."""
         period = 1.0 / self._tick_rate
 
-        while self._running:
+        while not self._stop_event.is_set():
             tick_start = time.perf_counter()
 
             try:

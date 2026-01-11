@@ -47,7 +47,7 @@ class XArmBackend:
     - Velocities: XArm uses deg/s, we use rad/s
     """
 
-    def __init__(self, ip: str = "192.168.1.185", dof: int = 6) -> None:
+    def __init__(self, ip: str, dof: int = 6) -> None:
         self._ip = ip
         self._dof = dof
         self._arm: XArmAPI | None = None
