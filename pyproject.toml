@@ -53,6 +53,7 @@ dependencies = [
     # Core Msgs
     "opencv-python",
     "open3d",
+    "robot_descriptions",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",

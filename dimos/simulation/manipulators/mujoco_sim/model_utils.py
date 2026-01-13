@@ -87,6 +87,15 @@ def load_manipulator_model(
     Raises:
         FileNotFoundError: If the model file is not found
     """
+    if model_path is None and robot_name == "xarm" and num_joints == 7:
+        menagerie = _load_menagerie_model("xarm7_mj_description", num_joints)
+        if menagerie is None:
+            raise FileNotFoundError(
+                "MuJoCo Menagerie model required for xarm7 but could not be loaded. "
+                "Install robot_descriptions and ensure xarm7_mj_description is available."
+            )
+        return menagerie, mujoco.MjData(menagerie)
+
     if model_path is None:
         model_path = find_model_path(robot_name, num_joints)
     elif isinstance(model_path, str):
@@ -101,3 +110,16 @@ def load_manipulator_model(
     data = mujoco.MjData(model)
 
     return model, data
+
+
+def _load_menagerie_model(robot_name: str, num_joints: int | None) -> mujoco.MjModel | None:
+    from robot_descriptions.loaders.mujoco import load_robot_description
+
+    description_name = "xarm7_mj_description"
+    try:
+        print("loading robot_descriptions")
+        logger.info(f"Loading MuJoCo model via robot_descriptions: {description_name}")
+        return load_robot_description(description_name)
+    except Exception as exc:
+        logger.warning(f"robot_descriptions load failed: {exc}")
+        return None
