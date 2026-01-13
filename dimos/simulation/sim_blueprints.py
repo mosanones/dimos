@@ -42,7 +42,7 @@ from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
     RobotState,
 )
 from dimos.msgs.trajectory_msgs import JointTrajectory
-from dimos.simulation.manipulators.mujoco_sim.xarmSimDriver import xarm_sim_driver
+from dimos.simulation.manipulators.mujoco_sim.xarm_sim_driver import xarm_sim_driver
 
 
 # Create a blueprint wrapper for the component-based driver
@@ -72,6 +72,10 @@ xarm7_trajectory_sim = autoconnect(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
         ("robot_state", RobotState): LCMTransport("/xarm/robot_state", RobotState),
+        ("joint_position_command", JointCommand): LCMTransport(
+            "/xarm/joint_position_command", JointCommand
+        ),
+        ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
     }
 )
 
