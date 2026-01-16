@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 import pickle
 import threading
