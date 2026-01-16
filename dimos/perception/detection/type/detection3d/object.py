@@ -64,19 +64,12 @@ class Object(Detection3D):
         Args:
             other: Another Object instance with newer detection data.
         """
-        # Accumulate pointclouds if transforms are available
+        # Update pointcloud and center from new detection
+        self.pointcloud = other.pointcloud
         if other.camera_transform is not None:
-            # Transform new pointcloud to world frame and add to existing
-            # transformed_pc = other.pointcloud.transform(other.camera_transform)
-            # self.pointcloud = self.pointcloud + transformed_pc
-
-            # Recompute center from accumulated pointcloud
-            self.pointcloud = other.pointcloud
             pc_center = other.pointcloud.center
             self.center = Vector3(pc_center.x, pc_center.y, pc_center.z)
         else:
-            # No transform available, just replace
-            self.pointcloud = other.pointcloud
             self.center = other.center
 
         self.camera_transform = other.camera_transform
@@ -120,9 +113,14 @@ class Object(Detection3D):
         return msg
 
     def agent_encode(self) -> dict[str, Any]:
-        """Encode for agent consumption."""
+        """Encode for agent consumption.
+
+        Exposes both object_id (permanent UUID) and track_id (transient YOLOE ID).
+        Use object_id for reliable lookups as track_id expires after ~2 seconds.
+        """
         return {
-            "id": self.track_id,
+            "object_id": self.object_id,
+            "track_id": self.track_id,
             "name": self.name,
             "detections": self.detections_count,
             "last_seen": f"{round(time.time() - self.ts)}s ago",

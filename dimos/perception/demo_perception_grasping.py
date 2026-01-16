@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from dimos.agents.agent import llm_agent
+from dimos.agents.cli.human import human_input
+from dimos.core.blueprints import autoconnect
+from dimos.grasping import graspgen, object_to_grasp_bridge
+from dimos.hardware.sensors.camera.realsense import realsense_camera
+from dimos.perception.detection.detectors.yoloe import YoloePromptMode
+from dimos.perception.object_scene_registration import object_scene_registration_module
+from dimos.robot.foxglove_bridge import foxglove_bridge
+
+USE_EYE_IN_HAND = False
+
+if USE_EYE_IN_HAND:
+    # Eye-in-hand: Camera mounted on end-effector
+    from dimos.hardware.sensors.camera.calibration import load_eye_in_hand_calibration
+
+    eef_to_camera = load_eye_in_hand_calibration(
+        robot_type="xarm6",
+        camera_type="realsense",
+    )
+    camera_module = realsense_camera(
+        base_frame_id="eef",
+        base_transform=eef_to_camera,
+        enable_pointcloud=False,
+    )
+    target_frame = "world"  # Transform to world for grasp execution
+else:
+    # Fixed camera: Camera on tripod
+    camera_module = realsense_camera(enable_pointcloud=False)
+    target_frame = "base_link"
+
+demo_perception_grasping = autoconnect(
+    camera_module,
+    object_scene_registration_module(target_frame=target_frame, prompt_mode=YoloePromptMode.PROMPT),
+    object_to_grasp_bridge(min_points=100),
+    graspgen(gripper_type="robotiq_2f_140", num_grasps=400, topk_num_grasps=100, filter_collisions=False),
+    foxglove_bridge(),
+    human_input(),
+    llm_agent(),
+).global_config(viewer_backend="foxglove")
