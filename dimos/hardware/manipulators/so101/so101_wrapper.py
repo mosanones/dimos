@@ -145,7 +145,7 @@ class SO101SDKWrapper(BaseManipulatorSDK):
         try:
             port = config.get("port", "/dev/ttyUSB0")
             calibration_path = config.get(
-                "calibration_path", "dimos/hardware/so101_utils/calibration/so101_arm.json"
+                "calibration_path", "dimos/hardware/manipulators/so101/calibration/so101_arm.json"
             )
             self.logger.info("Connecting to SO-101 arm on port %s", port)
 
