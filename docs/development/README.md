@@ -180,7 +180,7 @@ uv run pytest dimos
 * Use when: you need absolute reliability (use this if you want it to work first try) and don't mind a startup delay
 * Upside: Doesn't need direnv, and has most of the other benefits of Nix
 * Downside: Have to manually enter the environment (like `./venv/bin/activate` but slower)
-* Upside: If you're you're using a basic shell, you'll get a nicely customized shell
+* Upside: If you're using a basic shell, you'll get a nicely customized shell
 * Downside: If you have hyper-customized your shell (fish, riced zsh, etc), you'll have to deal with someone else's preferences
 * Downside: Your vibe coding agent will basically be unable to run tests for you (they don't understand how to enter the environment)
 

@@ -108,9 +108,9 @@ All tests run with **pytest** inside the dev container, ensuring local results m
 pytest             # run all tests beneath the current directory
 ```
 
-Depending on which dir you are in, only tests from that dir will run, which is convinient when developing - you can frequently validate your feature tree.
+Depending on which dir you are in, only tests from that dir will run, which is convenient when developing - you can frequently validate your feature tree.
 
-Your vibe coding agent will know to use these tests via the devcontainer so it can validate it's work.
+Your vibe coding agent will know to use these tests via the devcontainer so it can validate its work.
 
 
 #### Useful options

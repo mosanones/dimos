@@ -166,7 +166,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline.png)
 
-if we loosen up our match tolerance we might get multiple pairs matching the same lidar frame
+If we loosen up our match tolerance we might get multiple pairs matching the same lidar frame
 
 ```python session=align
 aligned_pairs = align_timestamped(
@@ -239,7 +239,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline3.png)
 
-We are very picky but data is high quality. best frame, with closest lidar match in this window.
+We are very picky but data is high quality. Best frame, with closest lidar match in this window.
 
 ## How It Works
 

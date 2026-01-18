@@ -8,7 +8,7 @@ If you're showing an API usage pattern, create a minimal working example that ac
 After writing a code block in your markdown file, you can run it by executing
 `md-babel-py run document.md`
 
-more information on this tool is in [codeblocks](/docs/agents/docs_agent/codeblocks.md)
+More information on this tool is in [codeblocks](/docs/agents/docs_agent/codeblocks.md)
 
 
 # Code or Docs Links
