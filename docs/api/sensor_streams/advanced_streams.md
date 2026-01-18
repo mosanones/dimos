@@ -158,6 +158,69 @@ If you'd still like to switch to synchronous fetching, we provide two approaches
 | **Resources**    | Keeps connection open          | Opens/closes each call           |
 | **Use when**     | Frequent reads, need latest    | Occasional reads, save resources |
 
+<details>
+<summary>diagram source</summary>
+
+<details><summary>Pikchr</summary>
+
+```pikchr fold output=assets/getter_hot_cold.svg
+color = white
+fill = none
+
+# getter_hot section
+text "getter_hot()" bold at (0.5in, 1.1in)
+
+# Stream emitting values continuously
+Stream: box "Stream" rad 5px fit wid 170% ht 170% at (0.5in, 0.5in)
+arrow right 0.4in from Stream.e
+Cache: box "Cache" rad 5px fit wid 170% ht 170%
+
+# Values flowing into cache
+text "v1 v2 v3..." italic small at (Stream.x + 0.5in, Stream.y + 0.3in)
+
+# get_val() calls reading from cache instantly
+arrow from Cache.e right 0.3in then down 0.25in then right 0.25in
+Call1: text "get_val() → instant" small
+arrow from Cache.e right 0.3in then down 0.6in then right 0.25in
+Call2: text "get_val() → instant" small
+
+# Continuous subscription indicator
+line dashed from Stream.s down 0.2in
+text "always subscribed" italic small at (Stream.x, Stream.y - 0.45in)
+
+
+# getter_cold section
+text "getter_cold()" bold at (0.5in, -0.6in)
+
+# Each call creates fresh subscription
+Cold1: box "get_val()" rad 5px fit wid 170% ht 170% at (0.5in, -1.0in)
+arrow right 0.3in from Cold1.e
+text "subscribe" small
+arrow right 0.3in
+text "wait" small
+arrow right 0.3in
+text "value" small
+arrow right 0.3in
+text "dispose" small
+
+Cold2: box "get_val()" rad 5px fit wid 170% ht 170% at (0.5in, -1.5in)
+arrow right 0.3in from Cold2.e
+text "subscribe" small
+arrow right 0.3in
+text "wait" small
+arrow right 0.3in
+text "value" small
+arrow right 0.3in
+text "dispose" small
+```
+
+</details>
+
+<!--Result:-->
+![output](assets/getter_hot_cold.svg)
+
+</details>
+
 **Prefer `getter_cold()`** when you can afford to wait and warmup isn't expensive. It's simpler (no cleanup needed) and doesn't hold resources. Only use `getter_hot()` when you need instant reads or the source is expensive to start.
 
 ### `getter_hot()` - Background subscription, instant reads
