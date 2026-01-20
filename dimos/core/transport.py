@@ -226,14 +226,14 @@ class ROSTransport(PubSubTransport[DimosMsg]):
 
     def broadcast(self, _: Out[DimosMsg], msg: DimosMsg) -> None:
         if self._ros is None:
-            raise RuntimeError("ROSTransport not started, call start() first")
+            self.start()
         self._ros.publish(self.topic, msg)
 
     def subscribe(
         self, callback: Callable[[DimosMsg], Any], selfstream: Stream[DimosMsg] | None = None
     ) -> Callable[[], None]:
         if self._ros is None:
-            raise RuntimeError("ROSTransport not started, call start() first")
+            self.start()
         return self._ros.subscribe(self.topic, lambda msg, topic: callback(msg))
 
     def start(self) -> None:
