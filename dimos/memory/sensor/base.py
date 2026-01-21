@@ -14,10 +14,16 @@
 """Unified timestamped sensor storage and replay."""
 
 from abc import ABC, abstractmethod
+import bisect
 from collections.abc import Iterator
+import threading
+import time
 from typing import Generic, TypeVar
 
+import reactivex as rx
+from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.observable import Observable
+from reactivex.scheduler import TimeoutScheduler
 
 T = TypeVar("T")
 
@@ -57,8 +63,6 @@ class SensorStore(Generic[T], ABC):
 
     def save(self, data: T, timestamp: float | None = None) -> None:
         """Save data. Uses data.ts if available, otherwise timestamp arg, otherwise now."""
-        import time
-
         if timestamp is None:
             if hasattr(data, "ts"):
                 timestamp = data.ts  # type: ignore[union-attr]
@@ -77,15 +81,33 @@ class SensorStore(Generic[T], ABC):
         tolerance: float | None = None,
     ) -> T | None:
         """Find data closest to timestamp (absolute) or seek (relative to start)."""
-        ...
+        if timestamp is None and seek is None:
+            raise ValueError("Must provide either timestamp or seek")
+
+        if seek is not None:
+            first = self.first_timestamp()
+            if first is None:
+                return None
+            timestamp = first + seek
+
+        assert timestamp is not None
+        closest_ts = self._find_closest_timestamp(timestamp, tolerance)
+        if closest_ts is None:
+            return None
+        return self._load(closest_ts)
 
     def first_timestamp(self) -> float | None:
         """Get the first timestamp in the store."""
-        ...
+        for ts, _ in self._iter_items():
+            return ts
+        return None
 
     def iterate(self, loop: bool = False) -> Iterator[tuple[float, T]]:
         """Iterate over (timestamp, data) pairs."""
-        ...
+        while True:
+            yield from self._iter_items()
+            if not loop:
+                break
 
     def iterate_ts(
         self,
@@ -95,11 +117,39 @@ class SensorStore(Generic[T], ABC):
         loop: bool = False,
     ) -> Iterator[tuple[float, T]]:
         """Iterate with seek/duration options."""
-        ...
+        first = self.first_timestamp()
+        if first is None:
+            return
 
-    def iterate_realtime(self, speed: float = 1.0, **kwargs) -> Iterator[T]:
+        # Calculate start timestamp
+        if from_timestamp is not None:
+            start = from_timestamp
+        elif seek is not None:
+            start = first + seek
+        else:
+            start = None
+
+        # Calculate end timestamp
+        end = None
+        if duration is not None:
+            start_ts = start if start is not None else first
+            end = start_ts + duration
+
+        while True:
+            yield from self._iter_items(start=start, end=end)
+            if not loop:
+                break
+
+    def iterate_realtime(self, speed: float = 1.0, **kwargs: float | bool | None) -> Iterator[T]:
         """Iterate data, sleeping to match original timing."""
-        ...
+        prev_ts: float | None = None
+        for ts, data in self.iterate_ts(**kwargs):  # type: ignore[arg-type]
+            if prev_ts is not None:
+                delay = (ts - prev_ts) / speed
+                if delay > 0:
+                    time.sleep(delay)
+            prev_ts = ts
+            yield data
 
     def stream(
         self,
@@ -109,8 +159,87 @@ class SensorStore(Generic[T], ABC):
         from_timestamp: float | None = None,
         loop: bool = False,
     ) -> Observable[T]:
-        """Stream data as Observable with timing control."""
-        ...
+        """Stream data as Observable with timing control.
+
+        Uses scheduler-based timing with absolute time reference to prevent drift.
+        """
+
+        def subscribe(
+            observer: rx.abc.ObserverBase[T],
+            scheduler: rx.abc.SchedulerBase | None = None,
+        ) -> rx.abc.DisposableBase:
+            sched = scheduler or TimeoutScheduler()
+            disp = CompositeDisposable()
+            is_disposed = False
+
+            iterator = self.iterate_ts(
+                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+            )
+
+            # Get first message
+            try:
+                first_ts, first_data = next(iterator)
+            except StopIteration:
+                observer.on_completed()
+                return Disposable()
+
+            # Establish timing reference (absolute time prevents drift)
+            start_local_time = time.time()
+            start_replay_time = first_ts
+
+            # Emit first sample immediately
+            observer.on_next(first_data)
+
+            # Pre-load next message
+            try:
+                next_message: tuple[float, T] | None = next(iterator)
+            except StopIteration:
+                observer.on_completed()
+                return disp
+
+            def schedule_emission(message: tuple[float, T]) -> None:
+                nonlocal next_message, is_disposed
+
+                if is_disposed:
+                    return
+
+                ts, data = message
+
+                # Pre-load the following message while we have time
+                try:
+                    next_message = next(iterator)
+                except StopIteration:
+                    next_message = None
+
+                # Calculate absolute emission time
+                target_time = start_local_time + (ts - start_replay_time) / speed
+                delay = max(0.0, target_time - time.time())
+
+                def emit(
+                    _scheduler: rx.abc.SchedulerBase, _state: object
+                ) -> rx.abc.DisposableBase | None:
+                    if is_disposed:
+                        return None
+                    observer.on_next(data)
+                    if next_message is not None:
+                        schedule_emission(next_message)
+                    else:
+                        observer.on_completed()
+                    return None
+
+                sched.schedule_relative(delay, emit)
+
+            if next_message is not None:
+                schedule_emission(next_message)
+
+            def dispose() -> None:
+                nonlocal is_disposed
+                is_disposed = True
+                disp.dispose()
+
+            return Disposable(dispose)
+
+        return rx.create(subscribe)
 
 
 class InMemoryStore(SensorStore[T]):
@@ -140,8 +269,6 @@ class InMemoryStore(SensorStore[T]):
     def _find_closest_timestamp(
         self, timestamp: float, tolerance: float | None = None
     ) -> float | None:
-        import bisect
-
         timestamps = self._get_sorted_timestamps()
         if not timestamps:
             return None

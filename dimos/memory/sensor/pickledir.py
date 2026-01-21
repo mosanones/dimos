@@ -154,6 +154,7 @@ class PickleDirStore(SensorStore[T]):
         """Load data from a pickle file (LRU cached)."""
         try:
             with open(filepath, "rb") as f:
-                return pickle.load(f)
+                data: T = pickle.load(f)
+                return data
         except Exception:
             return None
