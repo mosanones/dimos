@@ -15,12 +15,27 @@
 
 from collections.abc import Iterator
 import pickle
+import re
 
 import psycopg2
 from psycopg2.extensions import connection as PgConnection
 
 from dimos.core.resource import Resource
 from dimos.memory.sensor.base import SensorStore, T
+
+# Valid SQL identifier: alphanumeric and underscores, not starting with digit
+_VALID_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _validate_identifier(name: str) -> str:
+    """Validate SQL identifier to prevent injection."""
+    if not _VALID_IDENTIFIER.match(name):
+        raise ValueError(
+            f"Invalid identifier '{name}': must be alphanumeric/underscore, not start with digit"
+        )
+    if len(name) > 128:
+        raise ValueError(f"Identifier too long: {len(name)} > 128")
+    return name
 
 
 class PostgresStore(SensorStore[T], Resource):
@@ -59,14 +74,14 @@ class PostgresStore(SensorStore[T], Resource):
     ) -> None:
         """
         Args:
-            table: Table name for this sensor's data.
-            db: Database name.
+            table: Table name for this sensor's data (alphanumeric/underscore only).
+            db: Database name (alphanumeric/underscore only).
             host: PostgreSQL host.
             port: PostgreSQL port.
             user: PostgreSQL user. Defaults to current system user.
         """
-        self._table = table
-        self._db = db
+        self._table = _validate_identifier(table)
+        self._db = _validate_identifier(db)
         self._host = host
         self._port = port
         self._user = user
@@ -221,10 +236,11 @@ def reset_db(db: str = "dimensional", host: str = "localhost", port: int = 5432)
     WARNING: This deletes all data in the database!
 
     Args:
-        db: Database name to reset.
+        db: Database name to reset (alphanumeric/underscore only).
         host: PostgreSQL host.
         port: PostgreSQL port.
     """
+    db = _validate_identifier(db)
     # Connect to 'postgres' database to drop/create
     conn = psycopg2.connect(dbname="postgres", host=host, port=port)
     conn.autocommit = True

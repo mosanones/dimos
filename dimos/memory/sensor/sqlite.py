@@ -16,9 +16,24 @@
 from collections.abc import Iterator
 from pathlib import Path
 import pickle
+import re
 import sqlite3
 
 from dimos.memory.sensor.base import SensorStore, T
+
+# Valid SQL identifier: alphanumeric and underscores, not starting with digit
+_VALID_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _validate_identifier(name: str) -> str:
+    """Validate SQL identifier to prevent injection."""
+    if not _VALID_IDENTIFIER.match(name):
+        raise ValueError(
+            f"Invalid identifier '{name}': must be alphanumeric/underscore, not start with digit"
+        )
+    if len(name) > 128:
+        raise ValueError(f"Identifier too long: {len(name)} > 128")
+    return name
 
 
 class SqliteStore(SensorStore[T]):
@@ -42,10 +57,10 @@ class SqliteStore(SensorStore[T]):
         """
         Args:
             db_path: Path to SQLite database file, or ":memory:" for in-memory.
-            table: Table name for this sensor's data.
+            table: Table name for this sensor's data (alphanumeric/underscore only).
         """
         self._db_path = str(db_path)
-        self._table = table
+        self._table = _validate_identifier(table)
         self._conn: sqlite3.Connection | None = None
 
     def _get_conn(self) -> sqlite3.Connection:

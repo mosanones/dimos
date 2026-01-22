@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from functools import reduce
 from typing import TypeVar
 
-from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
@@ -340,7 +340,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
-    ):
+    ) -> PoseStamped | None:
         tf = self.get(parent_frame, child_frame, time_point, time_tolerance)
         if not tf:
             return None

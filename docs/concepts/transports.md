@@ -64,7 +64,7 @@ Received 2 messages:
   {'temperature': 23.0}
 ```
 
-The full implementation is minimal. See [`memory.py`](/dimos/protocol/pubsub/memory.py) for the complete source.
+The full implementation is minimal. See [`pubsub/memory.py`](/dimos/protocol/pubsub/memory.py) for the complete source.
 
 ## Available Transports
 
