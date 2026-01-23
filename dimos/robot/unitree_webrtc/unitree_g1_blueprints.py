@@ -46,10 +46,19 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
+from dimos_lcm.std_msgs import Bool as LCMBool  # type: ignore[import-untyped]
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
-from dimos.navigation.rosnav import ros_nav
+
+try:
+    # Optional ROS2 navigation module (lazy import so simulation can run without ROS installed).
+    from dimos.navigation.rosnav import ros_nav  # type: ignore[import-untyped]
+
+    HAS_ROS_NAV = True
+except Exception:  # pragma: no cover
+    ros_nav = None  # type: ignore[assignment]
+    HAS_ROS_NAV = False
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
@@ -64,7 +73,7 @@ from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
-_basic_no_nav = (
+_basic_no_nav_hw = (
     autoconnect(
         camera_module(
             transform=Transform(
@@ -109,18 +118,67 @@ _basic_no_nav = (
             # Camera topics (if camera module is added)
             ("color_image", Image): LCMTransport("/g1/color_image", Image),
             ("camera_info", CameraInfo): LCMTransport("/g1/camera_info", CameraInfo),
+            # Policy safety controls (Command Center)
+            ("policy_enable", LCMBool): LCMTransport("/policy_enable", LCMBool),
+            ("policy_estop", LCMBool): LCMTransport("/policy_estop", LCMBool),
         }
     )
 )
 
-unitree_g1_basic = autoconnect(
-    _basic_no_nav,
-    g1_connection(),
-    ros_nav(),
+# Simulation-friendly base stack: no physical webcam access.
+_basic_no_nav_sim = (
+    autoconnect(
+        voxel_mapper(voxel_size=0.1),
+        cost_mapper(),
+        wavefront_frontier_explorer(),
+        # Visualization
+        websocket_vis(),
+        foxglove_bridge(),
+    )
+    .global_config(n_dask_workers=4, robot_model="unitree_g1")
+    .transports(
+        {
+            # G1 uses Twist for movement commands
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            # State estimation from ROS
+            ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
+            # Odometry output from ROSNavigationModule
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+            # Navigation module topics from nav_bot
+            ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
+            ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),
+            ("path_active", Path): LCMTransport("/path_active", Path),
+            ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
+            ("global_pointcloud", PointCloud2): LCMTransport("/map", PointCloud2),
+            # Original navigation topics for backwards compatibility
+            ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
+            ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
+            ("cancel_goal", Bool): LCMTransport("/cancel_goal", Bool),
+            # Camera topics (sim connection may publish these)
+            ("color_image", Image): LCMTransport("/g1/color_image", Image),
+            ("camera_info", CameraInfo): LCMTransport("/g1/camera_info", CameraInfo),
+            # Policy safety controls (Command Center)
+            ("policy_enable", LCMBool): LCMTransport("/policy_enable", LCMBool),
+            ("policy_estop", LCMBool): LCMTransport("/policy_estop", LCMBool),
+        }
+    )
 )
 
-unitree_g1_basic_sim = autoconnect(
-    _basic_no_nav,
+if HAS_ROS_NAV and ros_nav is not None:
+    basic_ros = autoconnect(
+        _basic_no_nav_hw,
+        g1_connection(),
+        ros_nav(),
+    )
+else:
+    # ROS-free fallback: keep the same blueprint name, but omit the ROS nav module.
+    basic_ros = autoconnect(
+        _basic_no_nav_hw,
+        g1_connection(),
+    )
+
+basic_sim = autoconnect(
+    _basic_no_nav_sim,
     g1_sim_connection(),
     replanning_a_star_planner(),
 )
@@ -131,19 +189,19 @@ _perception_and_memory = autoconnect(
     utilization(),
 )
 
-unitree_g1 = autoconnect(
-    unitree_g1_basic,
+standard = autoconnect(
+    basic_ros,
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
-unitree_g1_sim = autoconnect(
-    unitree_g1_basic_sim,
+standard_sim = autoconnect(
+    basic_sim,
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
 # Optimized configuration using shared memory for images
-unitree_g1_shm = autoconnect(
-    unitree_g1.transports(
+standard_with_shm = autoconnect(
+    standard.transports(
         {
             ("color_image", Image): pSHMTransport(
                 "/g1/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
@@ -165,26 +223,26 @@ _agentic_skills = autoconnect(
 )
 
 # Full agentic configuration with LLM and skills
-unitree_g1_agentic = autoconnect(
-    unitree_g1,
+agentic = autoconnect(
+    standard,
     _agentic_skills,
 )
 
-unitree_g1_agentic_sim = autoconnect(
-    unitree_g1_sim,
+agentic_sim = autoconnect(
+    standard_sim,
     _agentic_skills,
 )
 
 # Configuration with joystick control for teleoperation
-unitree_g1_joystick = autoconnect(
-    unitree_g1_basic,
+with_joystick = autoconnect(
+    basic_ros,
     keyboard_teleop(),  # Pygame-based joystick control
 )
 
 # Detection configuration with person tracking and 3D detection
-unitree_g1_detection = (
+detection = (
     autoconnect(
-        unitree_g1_basic,
+        basic_ros,
         # Person detection modules with YOLO
         detection3d_module(
             camera_info=zed.CameraInfo.SingleWebcam,
@@ -261,8 +319,8 @@ unitree_g1_detection = (
 )
 
 # Full featured configuration with everything
-unitree_g1_full = autoconnect(
-    unitree_g1_shm,
+full_featured = autoconnect(
+    standard_with_shm,
     _agentic_skills,
     keyboard_teleop(),
 )
