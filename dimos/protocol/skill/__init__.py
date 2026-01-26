@@ -1,1 +1,1 @@
-from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.skill import SkillContainer, abstract_impl, skill

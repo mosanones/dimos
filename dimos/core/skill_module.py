@@ -14,19 +14,19 @@
 
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
-from dimos.protocol.skill.skill import rpc
+from dimos.protocol.skill.skill import abstract_impl, rpc
 
 
 class SkillModule(Module):
     """Use this module if you want to auto-register skills to an AgentSpec."""
 
-    @rpc
-    def set_AgentSpec_register_skills(self, callable: RpcCall) -> None:
+    @abstract_impl("AgentSpec", "register_skills")
+    def register_skills_agent(self, callable: RpcCall) -> None:
         callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(RPCClient(self, self.__class__))
 
-    @rpc
-    def set_MCPModule_register_skills(self, callable: RpcCall) -> None:
+    @abstract_impl("MCPModule", "register_skills")
+    def register_skills_mcp(self, callable: RpcCall) -> None:
         callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(RPCClient(self, self.__class__))
 

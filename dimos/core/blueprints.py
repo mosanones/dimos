@@ -298,26 +298,30 @@ class Blueprint:
             for (module, name), replacement in self.remapping_map.items()
             if is_spec(replacement) or issubclass(replacement, Module)
         }
-        
+
         # after this loop we should have an exact module for every module_ref on every blueprint
         for blueprint in self.blueprints:
             for each_module_ref in blueprint.module_refs:
                 # we've got to find a another module that implements this spec
-                spec = mod_and_mod_ref_to_proxy.get((blueprint.module, each_module_ref.name), each_module_ref.spec)
-                
+                spec = mod_and_mod_ref_to_proxy.get(
+                    (blueprint.module, each_module_ref.name), each_module_ref.spec
+                )
+
                 # if the spec is actually module, use that (basically a user override)
                 if isinstance(spec, Module):
-                    mod_and_mod_ref_to_proxy[blueprint.module, each_module_ref.name] = module_coordinator.get_instance(spec)
+                    mod_and_mod_ref_to_proxy[blueprint.module, each_module_ref.name] = (
+                        module_coordinator.get_instance(spec)
+                    )
                     continue
-                
+
                 # find all available candidates
                 possible_module_candidates = [
                     each_other_blueprint.module
-                        for each_other_blueprint in self.blueprints
-                        if (
-                            each_other_blueprint != blueprint and 
-                            spec_structural_compliance(each_other_blueprint, spec)
-                        )
+                    for each_other_blueprint in self.blueprints
+                    if (
+                        each_other_blueprint != blueprint
+                        and spec_structural_compliance(each_other_blueprint, spec)
+                    )
                 ]
                 # we keep valid separate from invalid to provide a better error message for "almost" valid cases
                 valid_module_candidates = [
@@ -327,39 +331,52 @@ class Blueprint:
                 ]
                 # none
                 if len(possible_module_candidates) == 0:
-                    raise Exception(f'''The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I couldn't find a module that met that spec.\n''')
+                    raise Exception(
+                        f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I couldn't find a module that met that spec.\n"""
+                    )
                 # exactly one structurally valid candidate
                 elif len(possible_module_candidates) == 1:
                     if len(valid_module_candidates) == 0:
-                        logger.warning(f'''The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. I found a module ({possible_module_candidates[0].__name__}) that met that spec structurally, but it had a mismatch in type annotations.\nPlease either change the {each_module_ref.spec.__name__} spec or the {possible_module_candidates[0].__name__} module.\n''')
-                    mod_and_mod_ref_to_proxy[blueprint.module, each_module_ref.name] = possible_module_candidates[0]
+                        logger.warning(
+                            f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. I found a module ({possible_module_candidates[0].__name__}) that met that spec structurally, but it had a mismatch in type annotations.\nPlease either change the {each_module_ref.spec.__name__} spec or the {possible_module_candidates[0].__name__} module.\n"""
+                        )
+                    mod_and_mod_ref_to_proxy[blueprint.module, each_module_ref.name] = (
+                        possible_module_candidates[0]
+                    )
                     continue
                 # more than one
                 elif len(valid_module_candidates) > 1:
-                    raise Exception(f'''The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I found multiple modules that met that spec: {possible_module_candidates}.\nTo fix this use .remappings, for example:\n    autoconnect(...).remappings([ ({blueprint.module.__name__}, {repr(each_module_ref.name)}, <ModuleThatHasTheRpcCalls>) ])\n''')
+                    raise Exception(
+                        f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I found multiple modules that met that spec: {possible_module_candidates}.\nTo fix this use .remappings, for example:\n    autoconnect(...).remappings([ ({blueprint.module.__name__}, {each_module_ref.name!r}, <ModuleThatHasTheRpcCalls>) ])\n"""
+                    )
                 # structural candidates, but no valid candidates
                 elif len(valid_module_candidates) == 0:
-                    possible_module_candidates_str = ', '.join([each_candidate.__name__ for each_candidate in possible_module_candidates])
-                    raise Exception(f'''The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. Some modules ({possible_module_candidates_str}) met the spec structurally but had a mismatch in type annotations\n''')
+                    possible_module_candidates_str = ", ".join(
+                        [each_candidate.__name__ for each_candidate in possible_module_candidates]
+                    )
+                    raise Exception(
+                        f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. Some modules ({possible_module_candidates_str}) met the spec structurally but had a mismatch in type annotations\n"""
+                    )
                 # one valid candidate (and more than one structurally valid candidate)
                 else:
-                    mod_and_mod_ref_to_proxy[blueprint.module, each_module_ref.name] = valid_module_candidates[0]
-        
+                    mod_and_mod_ref_to_proxy[blueprint.module, each_module_ref.name] = (
+                        valid_module_candidates[0]
+                    )
+
         # now that we know the connections, we mutate the RPCClient objects
         for (base_module, module_ref_name), target_module in mod_and_mod_ref_to_proxy.items():
             base_module_proxy: ModuleProxy = module_coordinator.get_instance(base_module)
             target_module_proxy: ModuleProxy = module_coordinator.get_instance(target_module)
-            setattr(base_module_proxy, module_ref_name, target_module_proxy.get_rpc_calls(module_ref_name))
+            setattr(
+                base_module_proxy,
+                module_ref_name,
+                target_module_proxy.get_rpc_calls(module_ref_name),
+            )
 
     def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
-        rpc_methods = {}
         rpc_methods_dot = {}
 
-        # Track interface methods to detect ambiguity.
-        interface_methods: defaultdict[str, list[tuple[type[Module], Callable[..., Any]]]] = (
-            defaultdict(list)
-        )  # interface_name_method -> [(module_class, method)]
         interface_methods_dot: defaultdict[str, list[tuple[type[Module], Callable[..., Any]]]] = (
             defaultdict(list)
         )  # interface_name.method -> [(module_class, method)]
@@ -369,7 +386,6 @@ class Blueprint:
                 module_proxy: ModuleProxy = module_coordinator.get_instance(blueprint.module)
                 method_for_rpc_client = getattr(module_proxy, method_name)
                 # Register under concrete class name (backward compatibility)
-                rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method_for_rpc_client
                 rpc_methods_dot[f"{blueprint.module.__name__}.{method_name}"] = (
                     method_for_rpc_client
                 )
@@ -387,35 +403,24 @@ class Blueprint:
                         interface_methods_dot[interface_key].append(
                             (blueprint.module, method_for_rpc_client)
                         )
-                        interface_key_underscore = f"{base.__name__}_{method_name}"
-                        interface_methods[interface_key_underscore].append(
-                            (blueprint.module, method_for_rpc_client)
-                        )
 
         # Check for ambiguity in interface methods and add non-ambiguous ones
         for interface_key, implementations in interface_methods_dot.items():
             if len(implementations) == 1:
                 rpc_methods_dot[interface_key] = implementations[0][1]
-        for interface_key, implementations in interface_methods.items():
-            if len(implementations) == 1:
-                rpc_methods[interface_key] = implementations[0][1]
 
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
-            instance = module_coordinator.get_instance(blueprint.module)
-
-            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
-                if not method_name.startswith("set_"):
-                    continue
-
-                linked_name = method_name.removeprefix("set_")
-
-                self._check_ambiguity(linked_name, interface_methods, blueprint.module)
-
-                if linked_name not in rpc_methods:
-                    continue
-
-                getattr(instance, method_name)(rpc_methods[linked_name])
+            instance: RPCCLient = module_coordinator.get_instance(blueprint.module)
+            for method_name, method in blueprint.module.rpcs.items():  # type: ignore[attr-defined]
+                # is it a method that had a @abstract_impl decorator?
+                if hasattr(method, "_abstract"):
+                    linked_name = method._parent + "." + method._name
+                    self._check_ambiguity(linked_name, interface_methods_dot, blueprint.module)
+                    if linked_name in rpc_methods_dot:
+                        rpc_method = getattr(instance, method_name)
+                        rpc_method(rpc_methods_dot[linked_name])
+                        continue
 
             for requested_method_name in instance.get_rpc_method_names():  # type: ignore[union-attr]
                 self._check_ambiguity(
@@ -425,6 +430,8 @@ class Blueprint:
                 if requested_method_name not in rpc_methods_dot:
                     continue
 
+                # import code; code.interact(banner='',local={**globals(),**locals()})
+                # raise Exception(f'''\n\n\n\n\n\n\n\nFound case 2\n\n\n\n\n\n\n\n''')
                 instance.set_rpc_method(  # type: ignore[union-attr]
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )

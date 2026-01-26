@@ -16,7 +16,7 @@ import queue
 
 from reactivex.disposable import Disposable
 
-from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Output, Reducer, Stream, abstract_impl, skill  # type: ignore[attr-defined]
 from dimos.core import pLCMTransport, rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
@@ -46,8 +46,8 @@ class HumanInput(Module):
     def stop(self) -> None:
         super().stop()
 
-    @rpc
-    def set_AgentSpec_register_skills(self, callable: RpcCall) -> None:
+    @abstract_impl("AgentSpec", "register_skills")
+    def register_skills(self, callable: RpcCall) -> None:
         callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(self, run_implicit_name="human")
 

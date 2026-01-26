@@ -62,6 +62,20 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
     return fn
 
 
+def abstract_impl(parent: str, method: str):
+    def decorator(f: Callable[..., Any]) -> Any:
+        def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return f(self, *args, **kwargs)
+
+        wrapper._abstract = True
+        wrapper._parent = parent
+        wrapper._name = method
+        wrapper.__rpc__ = True
+        return wrapper
+
+    return decorator
+
+
 def skill(
     reducer: Reducer = Reducer.latest,  # type: ignore[assignment]
     stream: Stream = Stream.none,
