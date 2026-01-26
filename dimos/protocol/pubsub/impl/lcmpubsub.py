@@ -121,20 +121,14 @@ class Topic:
         Channel format: /topic#module.ClassName
         Falls back to default_lcm_type if type cannot be parsed.
         """
+        from dimos.msgs import resolve_msg_type
+
         if "#" not in channel:
             return Topic(topic=channel, lcm_type=default_lcm_type)
 
         topic_str, type_name = channel.rsplit("#", 1)
-        try:
-            # type_name format: "geometry_msgs.Vector3"
-            module_name, class_name = type_name.rsplit(".", 1)
-            import importlib
-
-            module = importlib.import_module(f"dimos.msgs.{module_name}")
-            lcm_type = getattr(module, class_name)
-            return Topic(topic=topic_str, lcm_type=lcm_type)
-        except (ValueError, ImportError, AttributeError):
-            return Topic(topic=topic_str, lcm_type=default_lcm_type)
+        lcm_type = resolve_msg_type(type_name)
+        return Topic(topic=topic_str, lcm_type=lcm_type or default_lcm_type)
 
 
 class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
