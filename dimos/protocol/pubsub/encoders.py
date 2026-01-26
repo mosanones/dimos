@@ -95,7 +95,7 @@ class LCMEncoderMixin(PubSubEncoderMixin[TopicT, DimosMsg, bytes]):
     def decode(self, msg: bytes, topic: TopicT) -> DimosMsg:
         lcm_type = getattr(topic, "lcm_type", None)
         if lcm_type is None:
-            raise ValueError("Cannot decode: topic has no lcm_type")
+            return None
         return cast("DimosMsg", lcm_type.lcm_decode(msg))
 
 

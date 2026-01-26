@@ -48,72 +48,71 @@ class Case(Generic[TopicT, MsgT]):
     regex_patterns: list[tuple[TopicT, set[int]]] = field(default_factory=list)
 
 
-# --- Context managers ---
-
-
 @contextmanager
 def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
     pub = LCM(autoconf=True)
-    sub = LCM(autoconf=True)
+    sub = LCM(autoconf=False)
     pub.start()
     sub.start()
-    yield pub, sub
-    pub.stop()
-    sub.stop()
+    try:
+        yield pub, sub
+    finally:
+        pub.stop()
+        sub.stop()
 
 
 @contextmanager
 def lcm_bytes_context() -> Generator[tuple[LCMPubSubBase, LCMPubSubBase], None, None]:
     pub = LCMPubSubBase(autoconf=True)
-    sub = LCMPubSubBase(autoconf=True)
+    sub = LCMPubSubBase(autoconf=False)
     pub.start()
     sub.start()
-    yield pub, sub
-    pub.stop()
-    sub.stop()
+    try:
+        yield pub, sub
+    finally:
+        pub.stop()
+        sub.stop()
 
-
-# --- Test cases ---
 
 testcases: list[Case[Any, Any]] = [
     Case(
         name="lcm_typed",
         pubsub_context=lcm_typed_context,
         topic_values=[
-            (Topic("/sensor/position", Vector3), Vector3(1, 2, 3)),
-            (Topic("/sensor/orientation", Quaternion), Quaternion(0, 0, 0, 1)),
-            (Topic("/robot/arm", Pose), Pose(Vector3(4, 5, 6), Quaternion(0, 0, 0, 1))),
+            (Topic("/pattern_sub/sensor/position", Vector3), Vector3(1, 2, 3)),
+            (Topic("/pattern_sub/sensor/orientation", Quaternion), Quaternion(0, 0, 0, 1)),
+            (Topic("/pattern_sub/robot/arm", Pose), Pose(Vector3(4, 5, 6), Quaternion(0, 0, 0, 1))),
         ],
         tags={"all", "glob", "regex"},
         glob_patterns=[
-            (Topic(topic=Glob("/sensor/*")), {0, 1}),
-            (Topic(topic=Glob("/**/arm")), {2}),
-            (Topic(topic=Glob("/**")), {0, 1, 2}),
+            (Topic(topic=Glob("/pattern_sub/sensor/*")), {0, 1}),
+            (Topic(topic=Glob("/pattern_sub/**/arm")), {2}),
+            (Topic(topic=Glob("/pattern_sub/**")), {0, 1, 2}),
         ],
         regex_patterns=[
-            (Topic(re.compile(r"/sensor/.*")), {0, 1}),
-            (Topic(re.compile(r".*/arm"), Pose), {2}),
-            (Topic(re.compile(r".*/arm")), {2}),
-            (Topic(re.compile(r".*/arm#geometry.*")), {2}),
+            (Topic(re.compile(r"/pattern_sub/sensor/.*")), {0, 1}),
+            (Topic(re.compile(r"/pattern_sub.*/arm"), Pose), {2}),
+            (Topic(re.compile(r"/pattern_sub.*/arm")), {2}),
+            (Topic(re.compile(r"/pattern_sub.*/arm#geometry.*")), {2}),
         ],
     ),
     Case(
         name="lcm_bytes",
         pubsub_context=lcm_bytes_context,
         topic_values=[
-            (Topic("/sensor/temp"), b"temp"),
-            (Topic("/sensor/humidity"), b"humidity"),
-            (Topic("/robot/arm"), b"arm"),
+            (Topic("/pattern_sub/sensor/temp"), b"temp"),
+            (Topic("/pattern_sub/sensor/humidity"), b"humidity"),
+            (Topic("/pattern_sub/robot/arm"), b"arm"),
         ],
         tags={"all", "glob", "regex"},
         glob_patterns=[
-            (Topic(topic=Glob("/sensor/*")), {0, 1}),
-            (Topic(topic=Glob("/**/arm")), {2}),
-            (Topic(topic=Glob("/**")), {0, 1, 2}),
+            (Topic(topic=Glob("/pattern_sub/sensor/*")), {0, 1}),
+            (Topic(topic=Glob("/pattern_sub/**/arm")), {2}),
+            (Topic(topic=Glob("/pattern_sub/**")), {0, 1, 2}),
         ],
         regex_patterns=[
-            (Topic(re.compile(r"/sensor/.*")), {0, 1}),
-            (Topic(re.compile(r".*/arm")), {2}),
+            (Topic(re.compile(r"/pattern_sub/sensor/.*")), {0, 1}),
+            (Topic(re.compile(r"/pattern_sub.*/arm")), {2}),
         ],
     ),
 ]
@@ -135,7 +134,7 @@ def test_subscribe_all_receives_all_topics(tc: Case[Any, Any]) -> None:
         for topic, value in tc.topic_values:
             pub.publish(topic, value)
 
-        time.sleep(0.1)
+        time.sleep(0.01)
 
         assert len(received) == len(tc.topic_values)
 
@@ -156,13 +155,13 @@ def test_subscribe_all_unsubscribe(tc: Case[Any, Any]) -> None:
         unsub = sub.subscribe_all(lambda msg, topic: received.append((msg, topic)))
 
         pub.publish(topic, value)
-        time.sleep(0.1)
+        time.sleep(0.01)
         assert len(received) == 1
 
         unsub()
 
         pub.publish(topic, value)
-        time.sleep(0.1)
+        time.sleep(0.01)
         assert len(received) == 1  # No new messages
 
 
@@ -180,7 +179,7 @@ def test_subscribe_all_with_regular_subscribe(tc: Case[Any, Any]) -> None:
 
         pub.publish(topic1, value1)
         pub.publish(topic2, value2)
-        time.sleep(0.1)
+        time.sleep(0.01)
 
         # subscribe_all gets both
         assert len(all_received) == 2
@@ -202,7 +201,7 @@ def test_subscribe_glob(tc: Case[Any, Any]) -> None:
             for topic, value in tc.topic_values:
                 pub.publish(topic, value)
 
-            time.sleep(0.1)
+            time.sleep(0.01)
 
             assert len(received) == len(expected_indices), (
                 f"Expected {len(expected_indices)} messages for pattern {pattern_topic}, "
@@ -228,7 +227,7 @@ def test_subscribe_regex(tc: Case[Any, Any]) -> None:
             for topic, value in tc.topic_values:
                 pub.publish(topic, value)
 
-            time.sleep(0.1)
+            time.sleep(0.01)
 
             assert len(received) == len(expected_indices), (
                 f"Expected {len(expected_indices)} messages for pattern {pattern_topic}, "
