@@ -62,7 +62,7 @@ class ManipulationClient:
         """Call RPC method."""
         try:
             result, _ = self._rpc.call_sync(
-                f"{self._module}/{method}", (list(args), kwargs), rpc_timeout=30.0
+                f"{self._module}/{method}", (list(args), kwargs), rpc_timeout=10.0
             )
             return result
         except TimeoutError:
