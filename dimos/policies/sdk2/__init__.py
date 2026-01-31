@@ -7,12 +7,17 @@ Unitree SDK2 DDS (rt/lowstate, rt/lowcmd), shared across:
 - mirror: MuJoCo subscribes rt/lowstate for visualization while policy publishes rt/lowcmd
 """
 
-from .types import CommandContext, JointTargets, RobotState
+from .factory import PolicyFactory, PolicyFactoryConfig
+from .runner import PolicyRunner
 from .runtime import PolicyRuntime
+from .types import CommandContext, JointTargets, RobotState
 
 __all__ = [
     "CommandContext",
     "JointTargets",
+    "PolicyFactory",
+    "PolicyFactoryConfig",
+    "PolicyRunner",
     "PolicyRuntime",
     "RobotState",
 ]

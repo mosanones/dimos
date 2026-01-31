@@ -42,38 +42,16 @@ from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import LAUNCHER_PATH, LIDAR_FPS, VIDEO_FPS
-from dimos.simulation.mujoco.model import load_bundle_json
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.policies.sdk2.factory import PolicyFactory, PolicyFactoryConfig
 
 ODOM_FREQUENCY = 50
 
 logger = setup_logger()
 
 T = TypeVar("T")
-
-
-class _PolicyRuntimeShim:
-    """Unify PolicyRuntime to the legacy SDK2PolicyRunner surface used by MujocoConnection."""
-
-    def __init__(self, rt: Any) -> None:
-        self._rt = rt
-
-    def step(self) -> None:
-        self._rt.step()
-
-    def set_command(self, vx: float, vy: float, wz: float) -> None:
-        self._rt.set_cmd_vel(vx, vy, wz)
-
-    def set_enabled(self, enabled: bool) -> None:
-        self._rt.set_enabled(enabled)
-
-    def set_estop(self, estop: bool) -> None:
-        self._rt.set_estop(estop)
-
-    def set_policy_params_json(self, params_json: str) -> None:
-        self._rt.set_policy_params_json(params_json)
 
 
 class MujocoConnection:
@@ -166,87 +144,24 @@ class MujocoConnection:
             logger.warning("SDK2 mode enabled but no profile specified, skipping policy runner")
             return
 
-        bundle_cfg = load_bundle_json(profile)
-        if not bundle_cfg:
-            logger.warning(f"No bundle.json found for profile {profile}")
-            return
-
-        policy_name = bundle_cfg.get("policy")
-        if not policy_name:
-            logger.info("SDK2 mode: no policy in bundle.json, waiting for external policy")
-            return
-
-        robot_type = str(bundle_cfg.get("robot_type", "g1"))
-        policy_kind = str(bundle_cfg.get("policy_kind", "mjlab_velocity"))
-        policy_config_name = bundle_cfg.get("policy_config")
-
-        # Find policy file
-        data_dir = Path(__file__).parent.parent.parent.parent / "data" / "mujoco_sim"   
-        policy_path = data_dir / policy_name
-        if not policy_path.exists():
-            # Try in profile directory
-            policy_path = data_dir / profile / policy_name
-        if not policy_path.exists():
-            logger.warning(f"SDK2 policy not found: {policy_name}")
-            return
-
-        logger.info(
-            "Starting SDK2 policy runner",
-            policy=str(policy_path),
-            robot_type=robot_type,
-            policy_kind=policy_kind,
-        )
-
-        # Import here to avoid circular imports / heavy optional deps.
-        from dimos.simulation.mujoco.sdk2_policy_runner import SDK2PolicyRunner
-
         self._policy_stop_event = threading.Event()
 
         def run_policy() -> None:
             try:
                 # Wait a bit for the simulator to fully initialize
                 time.sleep(1.0)
-
-                if policy_kind == "mjlab_velocity":
-                    self._policy_runner = SDK2PolicyRunner(
-                        policy_path=str(policy_path),
-                        robot_type=robot_type,
+                runner = PolicyFactory.from_profile(
+                    profile,
+                    PolicyFactoryConfig(
                         domain_id=self.global_config.sdk2_domain_id,
                         interface=self.global_config.sdk2_interface,
-                        control_dt=0.02,  # 50 Hz
-                    )
-                elif policy_kind == "falcon_loco_manip":
-                    if not policy_config_name:
-                        raise RuntimeError("Falcon policy_kind requires bundle.json policy_config (YAML)")
-                    yaml_path = data_dir / profile / str(policy_config_name)
-                    if not yaml_path.exists():
-                        yaml_path = data_dir / str(policy_config_name)
-                    if not yaml_path.exists():
-                        raise RuntimeError(f"Falcon policy_config not found: {policy_config_name}")
+                        control_dt=0.02,
+                    ),
+                )
+                if runner is None:
+                    return
+                self._policy_runner = runner
 
-                    from dimos.policies.sdk2.adapters.falcon import FalconLocoManipAdapter
-                    from dimos.policies.sdk2.runtime import PolicyRuntime, PolicyRuntimeConfig
-
-                    adapter = FalconLocoManipAdapter(
-                        policy_path=str(policy_path),
-                        falcon_yaml_path=str(yaml_path),
-                        policy_action_scale=float(bundle_cfg.get("policy_action_scale", 0.25)),  # type: ignore[arg-type]
-                    )
-                    rt = PolicyRuntime(
-                        adapter=adapter,
-                        config=PolicyRuntimeConfig(
-                            robot_type=robot_type,
-                            domain_id=self.global_config.sdk2_domain_id,
-                            interface=self.global_config.sdk2_interface,
-                            control_dt=0.02,
-                            mode_pr=int(bundle_cfg.get("mode_pr", 0)),  # type: ignore[arg-type]
-                        ),
-                    )
-                    self._policy_runner = _PolicyRuntimeShim(rt)
-                else:
-                    raise RuntimeError(f"Unknown policy_kind '{policy_kind}'")
-
-                # Run policy loop with stop check
                 logger.info("SDK2 policy runner started")
 
                 # Apply any latched safety state immediately.
