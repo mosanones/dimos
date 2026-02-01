@@ -75,7 +75,6 @@ class RerunConvertible(Protocol):
 
 ViewerMode = Literal["native", "web", "none"]
 
-
 # Notes on this system
 #
 # In the future it would be nice if modules can annotate their individual OUTs with (general or rerun specific)
@@ -252,12 +251,10 @@ def main() -> None:
         # defines transforms for rerun entity paths
         transforms={
             Glob("world/debug_navigation"): lambda grid: grid.to_rerun(
-                mode="mesh",
                 colormap="Purples",
                 z_offset=0.015,
-                brightness=0.5,
-                cost_range=[0, 20],
-                free_color="#484981",
+                brightness=0.75,
+                cost_range=[0, 40],
             ),
         },
     )
