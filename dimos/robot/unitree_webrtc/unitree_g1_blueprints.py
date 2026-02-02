@@ -24,6 +24,10 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import (
+    Bool as LCMBool,  # type: ignore[import-untyped]
+    String as LCMString,  # type: ignore[import-untyped]
+)
 
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
@@ -46,11 +50,10 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
-from dimos_lcm.std_msgs import Bool as LCMBool  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs import String as LCMString  # type: ignore[import-untyped]
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
+
 try:
     # Optional ROS2 navigation module (so sim can run without ROS installed).
     from dimos.navigation.rosnav import ros_nav  # type: ignore[import-untyped]

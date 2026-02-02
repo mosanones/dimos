@@ -12,41 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SDK2 Bridge Controller for MuJoCo simulation.
+"""Unitree DDS bridge controller for MuJoCo simulation.
 
 Bridges unitree_sdk2py DDS messages to MuJoCo actuators, enabling policies
 to deploy to simulation or real Unitree robots with zero code changes.
 
-Uses unitree_sdk2py's native ChannelFactory for full SDK2 compatibility.
+Uses unitree_sdk2py's native ChannelFactory for Unitree DDS compatibility.
 """
 
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
 # pyright: reportMissingModuleSource=false
-
 from dataclasses import dataclass
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 import mujoco
-
 from unitree_sdk2py.core.channel import (
     ChannelFactoryInitialize,
     ChannelPublisher,
     ChannelSubscriber,
 )
 
-from dimos.robot.unitree.sdk2.joints import G1_SDK2_MOTOR_JOINT_NAMES
+from dimos.robot.unitree.lowlevel.joints import G1_LOWLEVEL_MOTOR_JOINT_NAMES
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    pass
 
 logger = setup_logger()
 
-# Topic names (Unitree SDK2 convention)
+# Topic names (Unitree DDS convention)
 TOPIC_LOWCMD = "rt/lowcmd"
 TOPIC_LOWSTATE = "rt/lowstate"
 TOPIC_SPORTMODESTATE = "rt/sportmodestate"
@@ -56,8 +51,8 @@ MOTOR_SENSOR_NUM = 3  # position, velocity, torque per motor
 
 
 @dataclass
-class SDK2BridgeConfig:
-    """Configuration for SDK2 bridge."""
+class UnitreeDDSBridgeConfig:
+    """Configuration for Unitree DDS bridge."""
 
     domain_id: int = 1  # Unitree convention: 1 for sim, 0 for real
     interface: str = "lo0"  # "lo0" for macOS sim, "lo" for Linux, network interface for real
@@ -69,25 +64,20 @@ def _get_idl_types(robot_type: str) -> tuple[type, type, type, Any, Any]:
 
     Returns (LowCmd_, LowState_, SportModeState_, LowState_default_factory, SportModeState_default_factory)
     """
-    # Lazy import to avoid requiring unitree_sdk2py when not using SDK2 mode
+    # Lazy import to avoid requiring unitree_sdk2py when not using Unitree DDS mode
     if robot_type in ("g1", "h1_2"):
         # Humanoid robots use unitree_hg IDL
-        from unitree_sdk2py.idl.default import (
-            unitree_hg_msg_dds__LowState_ as LowState_default,
-        )
-        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
-
         # G1/H1-2 use same SportModeState from unitree_go
         from unitree_sdk2py.idl.default import (
             unitree_go_msg_dds__SportModeState_ as SportModeState_default,
+            unitree_hg_msg_dds__LowState_ as LowState_default,
         )
         from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
     else:
         # Quadruped robots (Go2, B2, H1, etc.) use unitree_go IDL
         from unitree_sdk2py.idl.default import (
             unitree_go_msg_dds__LowState_ as LowState_default,
-        )
-        from unitree_sdk2py.idl.default import (
             unitree_go_msg_dds__SportModeState_ as SportModeState_default,
         )
         from unitree_sdk2py.idl.unitree_go.msg.dds_ import (
@@ -99,8 +89,8 @@ def _get_idl_types(robot_type: str) -> tuple[type, type, type, Any, Any]:
     return LowCmd_, LowState_, SportModeState_, LowState_default, SportModeState_default
 
 
-class SDK2BridgeController:
-    """Bridges SDK2 DDS messages to MuJoCo actuators using unitree_sdk2py's native DDS.
+class UnitreeDDSBridgeController:
+    """Bridges Unitree DDS messages to MuJoCo actuators using unitree_sdk2py's native DDS.
 
     Subscribes to rt/lowcmd and applies PD control to MuJoCo actuators.
     Publishes rt/lowstate and rt/sportmodestate with sensor feedback.
@@ -110,7 +100,7 @@ class SDK2BridgeController:
         self,
         mj_model: mujoco.MjModel,
         mj_data: mujoco.MjData,
-        config: SDK2BridgeConfig,
+        config: UnitreeDDSBridgeConfig,
     ) -> None:
         self.mj_model = mj_model
         self.mj_data = mj_data
@@ -151,7 +141,7 @@ class SDK2BridgeController:
         self._data_lock = threading.Lock()
 
         logger.info(
-            "SDK2 bridge initialized",
+            "Unitree DDS bridge initialized",
             domain_id=config.domain_id,
             interface=config.interface,
             robot_type=config.robot_type,
@@ -163,7 +153,7 @@ class SDK2BridgeController:
 
         # Debug: show sensor indices and raw data
         logger.info(
-            "SDK2 sensor mapping debug",
+            "Unitree DDS sensor mapping debug",
             joint_pos_idx_0_5=[self._joint_pos_idx.get(i, -1) for i in range(6)],
             sensordata_0_5=self.mj_data.sensordata[0:6].tolist(),
             qpos_7_13=self.mj_data.qpos[7:13].tolist(),
@@ -205,20 +195,74 @@ class SDK2BridgeController:
         # IMPORTANT: These should match the policy's trained gains to avoid stiffness discontinuity
         # when switching from hold-position to policy control.
         # Values from MJLab model: hip_pitch=40.18, hip_roll=99.1, knee=99.1, ankle=28.5
-        self._default_kp = np.array([
-            40.0, 99.0, 40.0, 99.0, 28.5, 28.5,    # Left leg (matching MJLab gains)
-            40.0, 99.0, 40.0, 99.0, 28.5, 28.5,    # Right leg
-            40.0, 28.5, 28.5,                       # Waist (yaw=40, roll/pitch=28.5)
-            14.0, 14.0, 14.0, 14.0, 14.0, 17.0, 17.0,  # Left arm (from MJLab)
-            14.0, 14.0, 14.0, 14.0, 14.0, 17.0, 17.0,  # Right arm
-        ], dtype=np.float32)
-        self._default_kd = np.array([
-            2.5, 6.3, 2.5, 6.3, 1.8, 1.8,   # Left leg (matching MJLab damping)
-            2.5, 6.3, 2.5, 6.3, 1.8, 1.8,   # Right leg
-            2.5, 1.8, 1.8,                   # Waist
-            0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.1,  # Left arm
-            0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.1,  # Right arm
-        ], dtype=np.float32)
+        self._default_kp = np.array(
+            [
+                40.0,
+                99.0,
+                40.0,
+                99.0,
+                28.5,
+                28.5,  # Left leg (matching MJLab gains)
+                40.0,
+                99.0,
+                40.0,
+                99.0,
+                28.5,
+                28.5,  # Right leg
+                40.0,
+                28.5,
+                28.5,  # Waist (yaw=40, roll/pitch=28.5)
+                14.0,
+                14.0,
+                14.0,
+                14.0,
+                14.0,
+                17.0,
+                17.0,  # Left arm (from MJLab)
+                14.0,
+                14.0,
+                14.0,
+                14.0,
+                14.0,
+                17.0,
+                17.0,  # Right arm
+            ],
+            dtype=np.float32,
+        )
+        self._default_kd = np.array(
+            [
+                2.5,
+                6.3,
+                2.5,
+                6.3,
+                1.8,
+                1.8,  # Left leg (matching MJLab damping)
+                2.5,
+                6.3,
+                2.5,
+                6.3,
+                1.8,
+                1.8,  # Right leg
+                2.5,
+                1.8,
+                1.8,  # Waist
+                0.9,
+                0.9,
+                0.9,
+                0.9,
+                0.9,
+                1.1,
+                1.1,  # Left arm
+                0.9,
+                0.9,
+                0.9,
+                0.9,
+                0.9,
+                1.1,
+                1.1,  # Right arm
+            ],
+            dtype=np.float32,
+        )
 
         # Gain scaling factor for torque-controlled actuators
         # IMPORTANT: The policy was TRAINED with specific kp/kd gains (e.g., kp=40, kd=2.5).
@@ -230,7 +274,7 @@ class SDK2BridgeController:
         # Apply initial hold-position control
         self._apply_hold_position_control()
         logger.info(
-            "SDK2 bridge: holding initial position until commands arrive",
+            "Unitree DDS bridge: holding initial position until commands arrive",
             kp_scale=self._kp_scale,
             kd_scale=self._kd_scale,
         )
@@ -248,9 +292,7 @@ class SDK2BridgeController:
 
         # Get actuator/joint names and find corresponding sensors
         for i in range(self.num_motors):
-            actuator_name = mujoco.mj_id2name(
-                self.mj_model, mujoco._enums.mjtObj.mjOBJ_ACTUATOR, i
-            )
+            actuator_name = mujoco.mj_id2name(self.mj_model, mujoco._enums.mjtObj.mjOBJ_ACTUATOR, i)
             if actuator_name is None:
                 continue
 
@@ -274,7 +316,7 @@ class SDK2BridgeController:
         self._frame_vel_idx = self._find_sensor(["frame_vel", "global_linvel"])
 
         logger.debug(
-            "SDK2 bridge sensor maps built",
+            "Unitree DDS bridge sensor maps built",
             joint_pos_found=sum(1 for v in self._joint_pos_idx.values() if v >= 0),
             joint_vel_found=sum(1 for v in self._joint_vel_idx.values() if v >= 0),
             has_imu=self._imu_quat_idx >= 0,
@@ -284,9 +326,7 @@ class SDK2BridgeController:
     def _find_sensor(self, names: list[str]) -> int:
         """Find sensor index by trying multiple possible names. Returns -1 if not found."""
         for name in names:
-            sensor_id = mujoco.mj_name2id(
-                self.mj_model, mujoco._enums.mjtObj.mjOBJ_SENSOR, name
-            )
+            sensor_id = mujoco.mj_name2id(self.mj_model, mujoco._enums.mjtObj.mjOBJ_SENSOR, name)
             if sensor_id >= 0:
                 # Get the starting index in sensordata for this sensor
                 return int(self.mj_model.sensor_adr[sensor_id])
@@ -319,7 +359,7 @@ class SDK2BridgeController:
     def _apply_hold_position_control(self) -> None:
         """Apply PD control to hold the robot at initial position.
 
-        This is used before SDK2PolicyRunner sends commands to prevent the robot from falling.
+        This is used before the policy runner sends commands to prevent the robot from falling.
         """
         for i in range(self.num_motors):
             q_actual = self._get_joint_pos(i)
@@ -328,12 +368,11 @@ class SDK2BridgeController:
 
             # PD control: ctrl = kp*(q_target - q) - kd*dq
             self.mj_data.ctrl[i] = (
-                self._default_kp[i] * (q_target - q_actual)
-                - self._default_kd[i] * dq_actual
+                self._default_kp[i] * (q_target - q_actual) - self._default_kd[i] * dq_actual
             )
 
     def _lowcmd_callback(self, msg: Any) -> None:
-        """Receive SDK2 LowCmd and cache targets for per-step PD evaluation.
+        """Receive Unitree LowCmd and cache targets for per-step PD evaluation.
 
         IMPORTANT: We intentionally do NOT compute torques in this DDS callback.
         DDS callbacks run at the policy/control rate (e.g. 50Hz), but MuJoCo steps
@@ -350,7 +389,9 @@ class SDK2BridgeController:
             # Mark that we've received commands - stop holding position
             if not self._commands_received:
                 self._commands_received = True
-                logger.info("SDK2 bridge: first command received, switching to policy control")
+                logger.info(
+                    "Unitree DDS bridge: first command received, switching to policy control"
+                )
 
             # Debug: log first few commands
             if not hasattr(self, "_cmd_count"):
@@ -359,7 +400,7 @@ class SDK2BridgeController:
 
             if self._cmd_count <= 3:
                 logger.info(
-                    f"SDK2 lowcmd received #{self._cmd_count}",
+                    f"Unitree DDS lowcmd received #{self._cmd_count}",
                     q_target_0_5=[msg.motor_cmd[i].q for i in range(6)],
                     kp_policy_0_5=[msg.motor_cmd[i].kp for i in range(6)],
                     kp_scaled_0_5=[msg.motor_cmd[i].kp * self._kp_scale for i in range(6)],
@@ -377,7 +418,7 @@ class SDK2BridgeController:
     def on_mujoco_reset(self, *, grace_period_s: float = 0.2) -> None:
         """Handle MuJoCo viewer reset (e.g., backspace).
 
-        MuJoCo resets `data` state, but SDK2 runs out-of-process. Without this hook, the bridge
+        MuJoCo resets `data` state, but Unitree DDS runs out-of-process. Without this hook, the bridge
         would immediately apply stale cached targets (mid-gait) to a freshly reset pose, causing
         large transients and falls.
         """
@@ -402,7 +443,7 @@ class SDK2BridgeController:
             self._ignore_commands_until = time.time() + float(grace_period_s)
 
         logger.info(
-            "SDK2 bridge: MuJoCo reset detected; returning to hold-position mode",
+            "Unitree DDS bridge: MuJoCo reset detected; returning to hold-position mode",
             grace_period_s=float(grace_period_s),
         )
 
@@ -502,21 +543,21 @@ class SDK2BridgeController:
             self._sport_state.velocity[2] = self.mj_data.sensordata[idx + 2]
 
 
-G1_MOTOR_JOINT_NAMES: list[str] = G1_SDK2_MOTOR_JOINT_NAMES
+G1_MOTOR_JOINT_NAMES: list[str] = G1_LOWLEVEL_MOTOR_JOINT_NAMES
 
 
-class SDK2MirrorController:
+class UnitreeDDSMirrorController:
     """Subscriber-only DDS controller for 'mirror' mode.
 
-    Subscribes to the robot's SDK2 topics and writes the received state into MuJoCo `qpos/qvel`
-    for visualization. It does NOT publish any SDK2 topics (avoids conflicting with the real robot).
+    Subscribes to the robot's Unitree DDS topics and writes the received state into MuJoCo `qpos/qvel`
+    for visualization. It does NOT publish any Unitree DDS topics (avoids conflicting with the real robot).
     """
 
     def __init__(
         self,
         mj_model: mujoco.MjModel,
         mj_data: mujoco.MjData,
-        config: SDK2BridgeConfig,
+        config: UnitreeDDSBridgeConfig,
     ) -> None:
         self.mj_model = mj_model
         self.mj_data = mj_data
@@ -534,7 +575,9 @@ class SDK2MirrorController:
         import numpy as np
 
         if config.robot_type != "g1":
-            raise NotImplementedError("SDK2MirrorController currently supports robot_type='g1' only")
+            raise NotImplementedError(
+                "UnitreeDDSMirrorController currently supports robot_type='g1' only"
+            )
 
         # The DDS ChannelSubscriber spins its own reader thread. Create the lock + buffers
         # BEFORE calling .Init(...) to avoid a race where the callback fires immediately.
@@ -562,13 +605,13 @@ class SDK2MirrorController:
             if jid < 0:
                 self._motor_qposadr.append(-1)
                 self._motor_qveladr.append(-1)
-                logger.warning("SDK2 mirror: joint not found in model", joint=name)
+                logger.warning("Unitree DDS mirror: joint not found in model", joint=name)
                 continue
             self._motor_qposadr.append(int(self.mj_model.jnt_qposadr[jid]))
             self._motor_qveladr.append(int(self.mj_model.jnt_dofadr[jid]))
 
         logger.info(
-            "SDK2 mirror initialized",
+            "Unitree DDS mirror initialized",
             domain_id=config.domain_id,
             interface=config.interface,
             robot_type=config.robot_type,
@@ -620,4 +663,4 @@ class SDK2MirrorController:
         return True
 
 
-__all__ = ["SDK2BridgeConfig", "SDK2BridgeController", "SDK2MirrorController"]
+__all__ = ["UnitreeDDSBridgeConfig", "UnitreeDDSBridgeController", "UnitreeDDSMirrorController"]

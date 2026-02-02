@@ -76,52 +76,63 @@ export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 dimos --viewer-backend rerun-web --simulation run unitree-go2
 ```
 
-### Unitree G1 SDK2 policies (MuJoCo + real robot)
+### Unitree G1 DDS policies (MuJoCo + real robot)
 
 #### Install extras
 
 ```sh
-# SDK2 DDS + Unitree SDK2 Python bindings
-uv pip install 'dimos[base,unitree,sdk2]'
+# Unitree DDS + Unitree SDK Python bindings
+uv pip install 'dimos[base,unitree,unitree_dds]'
 
 # Optional: Falcon loco_manip upper-body IK (Pinocchio-only, pip-friendly)
 uv pip install 'dimos[falcon]'
 ```
 
-#### Policy selection via `bundle.json`
+#### Policy selection (typed)
 
-MuJoCo profiles can include `data/mujoco_sim/<profile>/bundle.json` with:
+Policy selection is explicit and typed via CLI flags or a named policy profile:
 
-- `policy`: ONNX filename (in the profile folder)
-- `robot_type`: usually `"g1"`
-- `policy_kind`:
-  - `"mjlab_velocity"` (default)
-  - `"falcon_loco_manip"`
-- `policy_config`: (Falcon only) YAML filename (in the profile folder)
+- CLI flags: `--policy-type`, `--policy-path`, `--policy-config`, `--policy-action-scale`, `--policy-mode-pr`
+- Optional named profiles: `--policy-profile <name>` (loads `dimos/config/policies/<name>.yaml`)
 
-Example:
-
-```json
-{
-  "robot_type": "g1",
-  "policy_kind": "falcon_loco_manip",
-  "policy": "policy.onnx",
-  "policy_config": "g1_29dof_falcon.yaml",
-  "mode_pr": 0,
-  "policy_action_scale": 0.25
-}
-```
-
-#### Run: sim2sim (SDK2)
+Example with a named profile:
 
 ```sh
-MUJOCO_CONTROL_MODE=sdk2 dimos --mujoco-profile unitree_g1_sdk2 run unitree-g1-sim
+MUJOCO_CONTROL_MODE=unitree_dds \
+dimos --mujoco-profile unitree_g1_dds \
+  --policy-profile g1_mjlab \
+run unitree-g1-sim
+```
+
+#### Run: sim2sim (Unitree DDS)
+
+```sh
+MUJOCO_CONTROL_MODE=unitree_dds \
+dimos --mujoco-profile unitree_g1_dds \
+  --policy-type mjlab_velocity \
+  --policy-path data/mujoco_sim/unitree_g1_mjlab/policy.onnx \
+  --policy-mode-pr 0 \
+run unitree-g1-sim
 ```
 
 #### Run: sim2real (mirror visualization + real robot commands)
 
 ```sh
-SDK2_INTERFACE=en7 SDK2_DOMAIN_ID=0 MUJOCO_CONTROL_MODE=mirror dimos --mujoco-profile unitree_g1_sdk2 run unitree-g1-sim
+UNITREE_INTERFACE=en7 UNITREE_DOMAIN_ID=0 MUJOCO_CONTROL_MODE=mirror \
+dimos --mujoco-profile unitree_g1_dds \
+  --policy-type mjlab_velocity \
+  --policy-path data/mujoco_sim/unitree_g1_mjlab/policy.onnx \
+  --policy-mode-pr 0 \
+run unitree-g1-sim
+```
+
+#### DDS parity harness (sanity check rates)
+
+```sh
+python -m dimos.robot.unitree.transport.parity_harness \
+  --robot-type g1 \
+  --domain-id 1 \
+  --interface lo0
 ```
 
 Open Command Center at `http://localhost:7779/command-center`:

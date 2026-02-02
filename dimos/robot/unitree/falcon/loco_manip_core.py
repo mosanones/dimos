@@ -1,8 +1,21 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
 # pyright: reportMissingModuleSource=false
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,7 +24,7 @@ import numpy as np
 import onnxruntime as ort
 import yaml
 
-from dimos.robot.unitree.sdk2.joints import G1_SDK2_MOTOR_JOINT_NAMES
+from dimos.robot.unitree.lowlevel.joints import G1_LOWLEVEL_MOTOR_JOINT_NAMES
 
 from .utils.math import quat_rotate_inverse_numpy
 
@@ -84,8 +97,12 @@ class FalconLocoManipCore:
             default_dof_angles=np.array(cfg_raw["DEFAULT_DOF_ANGLES"], dtype=np.float32),
             motor_kp=np.array(cfg_raw.get("MOTOR_KP", cfg_raw.get("JOINT_KP")), dtype=np.float32),
             motor_kd=np.array(cfg_raw.get("MOTOR_KD", cfg_raw.get("JOINT_KD")), dtype=np.float32),
-            motor_pos_lower=np.array(cfg_raw["motor_pos_lower_limit_list"], dtype=np.float32) if "motor_pos_lower_limit_list" in cfg_raw else None,
-            motor_pos_upper=np.array(cfg_raw["motor_pos_upper_limit_list"], dtype=np.float32) if "motor_pos_upper_limit_list" in cfg_raw else None,
+            motor_pos_lower=np.array(cfg_raw["motor_pos_lower_limit_list"], dtype=np.float32)
+            if "motor_pos_lower_limit_list" in cfg_raw
+            else None,
+            motor_pos_upper=np.array(cfg_raw["motor_pos_upper_limit_list"], dtype=np.float32)
+            if "motor_pos_upper_limit_list" in cfg_raw
+            else None,
             obs_dict=cfg_raw["obs_dict"],
             obs_dims=cfg_raw["obs_dims"],
             obs_scales=cfg_raw["obs_scales"],
@@ -95,7 +112,9 @@ class FalconLocoManipCore:
             residual_upper_body_action=bool(cfg_raw.get("residual_upper_body_action", True)),
             use_upper_body_controller=bool(cfg_raw.get("use_upper_body_controller", True)),
             unitree_mode_pr=int(cfg_raw.get("UNITREE_LEGGED_CONST", {}).get("MODE_PR", 0)),
-            unitree_mode_machine=int(cfg_raw.get("UNITREE_LEGGED_CONST", {}).get("MODE_MACHINE", 0)),
+            unitree_mode_machine=int(
+                cfg_raw.get("UNITREE_LEGGED_CONST", {}).get("MODE_MACHINE", 0)
+            ),
             asset_file=str(cfg_raw.get("ASSET_FILE", "")),
             asset_root=str(cfg_raw.get("ASSET_ROOT", "")),
         )
@@ -103,14 +122,23 @@ class FalconLocoManipCore:
         self.num_dofs = int(cfg_raw.get("NUM_JOINTS", 29))
         self.num_upper = int(cfg_raw.get("NUM_UPPER_BODY_JOINTS", 14))
         self.upper_dof_names = list(cfg_raw.get("dof_names_upper_body", []))
-        self._upper_indices = [G1_SDK2_MOTOR_JOINT_NAMES.index(n) for n in self.upper_dof_names] if self.upper_dof_names else list(range(15, 29))
+        self._upper_indices = (
+            [G1_LOWLEVEL_MOTOR_JOINT_NAMES.index(n) for n in self.upper_dof_names]
+            if self.upper_dof_names
+            else list(range(15, 29))
+        )
 
-        self.session = ort.InferenceSession(onnx_path, providers=providers or ort.get_available_providers())
+        self.session = ort.InferenceSession(
+            onnx_path, providers=providers or ort.get_available_providers()
+        )
         self.input_names = [i.name for i in self.session.get_inputs()]
 
         self.obs_dim_dict = _calc_obs_dim_dict(self.cfg.obs_dict, self.cfg.obs_dims)
         self.obs_buf_dict: dict[str, np.ndarray] = {
-            key: np.zeros((1, self.obs_dim_dict[key] * int(self.cfg.history_length_dict[key])), dtype=np.float32)
+            key: np.zeros(
+                (1, self.obs_dim_dict[key] * int(self.cfg.history_length_dict[key])),
+                dtype=np.float32,
+            )
             for key in self.obs_dim_dict
         }
 
@@ -122,7 +150,11 @@ class FalconLocoManipCore:
         self.waist_dofs_command = np.zeros((1, 3), dtype=np.float32)
 
         self.last_policy_action = np.zeros((1, self.num_dofs), dtype=np.float32)
-        self.policy_action_scale = float(policy_action_scale if policy_action_scale is not None else cfg_raw.get("policy_action_scale", 0.25))
+        self.policy_action_scale = float(
+            policy_action_scale
+            if policy_action_scale is not None
+            else cfg_raw.get("policy_action_scale", 0.25)
+        )
 
         # Upper body reference
         self.ref_upper_dof_pos = np.zeros((1, self.num_upper), dtype=np.float32)
@@ -184,23 +216,40 @@ class FalconLocoManipCore:
         self._degrees = float(ee_yaw_deg)
         self._theta = np.radians(self._degrees)
         self._ee_left_R = np.array(
-            [[np.cos(-self._theta), -np.sin(-self._theta), 0], [np.sin(-self._theta), np.cos(-self._theta), 0], [0, 0, 1]],
+            [
+                [np.cos(-self._theta), -np.sin(-self._theta), 0],
+                [np.sin(-self._theta), np.cos(-self._theta), 0],
+                [0, 0, 1],
+            ],
             dtype=np.float64,
         )
         self._ee_right_R = np.array(
-            [[np.cos(self._theta), -np.sin(self._theta), 0], [np.sin(self._theta), np.cos(self._theta), 0], [0, 0, 1]],
+            [
+                [np.cos(self._theta), -np.sin(self._theta), 0],
+                [np.sin(self._theta), np.cos(self._theta), 0],
+                [0, 0, 1],
+            ],
             dtype=np.float64,
         )
 
-        self._ee_left_xyz = (np.array([0.30, 0.13, 0.08], dtype=np.float32) + ee_left_offset.astype(np.float32, copy=False))
-        self._ee_right_xyz = (np.array([0.30, -0.13, 0.08], dtype=np.float32) + ee_right_offset.astype(np.float32, copy=False))
+        self._ee_left_xyz = np.array([0.30, 0.13, 0.08], dtype=np.float32) + ee_left_offset.astype(
+            np.float32, copy=False
+        )
+        self._ee_right_xyz = np.array(
+            [0.30, -0.13, 0.08], dtype=np.float32
+        ) + ee_right_offset.astype(np.float32, copy=False)
 
-    def _parse_current_obs_dict(self, current_obs_buffer_dict: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    def _parse_current_obs_dict(
+        self, current_obs_buffer_dict: dict[str, np.ndarray]
+    ) -> dict[str, np.ndarray]:
         current_obs_dict: dict[str, np.ndarray] = {}
         for key in self.cfg.obs_dict:
             obs_list = sorted(self.cfg.obs_dict[key])
             current_obs_dict[key] = np.concatenate(
-                [current_obs_buffer_dict[name] * float(self.cfg.obs_scales[name]) for name in obs_list],
+                [
+                    current_obs_buffer_dict[name] * float(self.cfg.obs_scales[name])
+                    for name in obs_list
+                ],
                 axis=1,
             )
         return current_obs_dict
@@ -208,12 +257,16 @@ class FalconLocoManipCore:
     def _prepare_obs_for_rl(self, robot_state_data: np.ndarray) -> dict[str, np.ndarray]:
         # Matches Falcon base_policy.get_current_obs_buffer_dict for the channels we use in loco_manip.
         base_quat = robot_state_data[:, 3:7]
-        dof_pos = robot_state_data[:, 7 : 7 + self.num_dofs] - self.cfg.default_dof_angles.reshape(1, -1)
+        dof_pos = robot_state_data[:, 7 : 7 + self.num_dofs] - self.cfg.default_dof_angles.reshape(
+            1, -1
+        )
         dof_vel = robot_state_data[:, 7 + self.num_dofs + 6 : 7 + self.num_dofs + 6 + self.num_dofs]
         base_ang_vel = robot_state_data[:, 7 + self.num_dofs + 3 : 7 + self.num_dofs + 6]
 
         v = np.array([[0, 0, -1]], dtype=np.float32)
-        projected_gravity = quat_rotate_inverse_numpy(base_quat.astype(np.float32), v.astype(np.float32))
+        projected_gravity = quat_rotate_inverse_numpy(
+            base_quat.astype(np.float32), v.astype(np.float32)
+        )
 
         current_obs_buffer_dict: dict[str, np.ndarray] = {
             "base_ang_vel": base_ang_vel.astype(np.float32),
@@ -257,11 +310,15 @@ class FalconLocoManipCore:
         R = pin.SE3(self._ee_right_R, self._ee_right_xyz.astype(np.float64))
 
         if not self._ik_initialized:
-            self.upper_body_controller.set_initial_poses(L.translation, R.translation, L.rotation, R.rotation)
+            self.upper_body_controller.set_initial_poses(
+                L.translation, R.translation, L.rotation, R.rotation
+            )
             self._ik_initialized = True
 
         # NOTE: our vendored `get_q_tau` uses collision_check=True internally.
-        upper_body_qpos, _ = self.upper_body_controller.get_q_tau(L, R, self._EE_efrc_L, self._EE_efrc_R)
+        upper_body_qpos, _ = self.upper_body_controller.get_q_tau(
+            L, R, self._EE_efrc_L, self._EE_efrc_R
+        )
 
         arm_reduced_joint_indices = [0, 1, 2, 3, 7, 8, 9, 10]
         for i, idx in enumerate(arm_reduced_joint_indices):
@@ -282,7 +339,11 @@ class FalconLocoManipCore:
 
         obs = self._prepare_obs_for_rl(robot_state_data)
 
-        inp = {self.input_names[0]: obs["actor_obs"]} if len(self.input_names) == 1 else {"actor_obs": obs["actor_obs"]}
+        inp = (
+            {self.input_names[0]: obs["actor_obs"]}
+            if len(self.input_names) == 1
+            else {"actor_obs": obs["actor_obs"]}
+        )
         policy_action = self.session.run(None, inp)[0]
         policy_action = np.clip(np.asarray(policy_action, dtype=np.float32), -100, 100)
 
@@ -293,7 +354,9 @@ class FalconLocoManipCore:
         if policy_action.shape[1] != self.num_dofs:
             pad = self.num_dofs - policy_action.shape[1]
             if pad > 0:
-                policy_action = np.concatenate([np.zeros((1, pad), dtype=np.float32), policy_action], axis=1)
+                policy_action = np.concatenate(
+                    [np.zeros((1, pad), dtype=np.float32), policy_action], axis=1
+                )
             else:
                 policy_action = policy_action[:, : self.num_dofs]
 
@@ -301,12 +364,12 @@ class FalconLocoManipCore:
         scaled = policy_action * float(self.policy_action_scale)
 
         if self.cfg.residual_upper_body_action:
-            scaled[:, self._upper_indices] += (self.ref_upper_dof_pos - self.cfg.default_dof_angles[self._upper_indices]).astype(np.float32)
+            scaled[:, self._upper_indices] += (
+                self.ref_upper_dof_pos - self.cfg.default_dof_angles[self._upper_indices]
+            ).astype(np.float32)
 
         q_target = (scaled.reshape(-1) + self.cfg.default_dof_angles).astype(np.float32)
         if self.cfg.motor_pos_lower is not None and self.cfg.motor_pos_upper is not None:
             q_target = np.clip(q_target, self.cfg.motor_pos_lower, self.cfg.motor_pos_upper)
 
         return q_target, self.cfg.motor_kp.astype(np.float32), self.cfg.motor_kd.astype(np.float32)
-
-

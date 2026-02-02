@@ -1827,7 +1827,7 @@ perception = [
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
 ]
-sdk2 = [
+unitree_dds = [
     { name = "unitree-sdk2py" },
 ]
 sim = [
@@ -1897,7 +1897,7 @@ requires-dist = [
     { name = "dask", extras = ["complete"], specifier = "==2025.5.1" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization", "sim"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
-    { name = "dimos", extras = ["sdk2"], marker = "extra == 'falcon'" },
+    { name = "dimos", extras = ["unitree_dds"], marker = "extra == 'falcon'" },
     { name = "dimos-lcm" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
     { name = "einops", marker = "extra == 'misc'", specifier = "==0.8.1" },
@@ -2016,7 +2016,7 @@ requires-dist = [
     { name = "types-tensorflow", marker = "extra == 'dev'", specifier = ">=2.18.0.20251008,<3" },
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.67.0.20250809,<5" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
-    { name = "unitree-sdk2py", marker = "extra == 'sdk2'", git = "https://github.com/unitreerobotics/unitree_sdk2_python.git" },
+    { name = "unitree-sdk2py", marker = "extra == 'unitree_dds'", git = "https://github.com/unitreerobotics/unitree_sdk2_python.git" },
     { name = "unitree-webrtc-connect-leshy", marker = "extra == 'unitree'", specifier = ">=2.0.7" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -2024,7 +2024,7 @@ requires-dist = [
     { name = "xformers", marker = "extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "falcon", "manipulation", "cpu", "cuda", "dev", "sim", "sdk2", "drone", "base"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "falcon", "manipulation", "cpu", "cuda", "dev", "sim", "unitree_dds", "drone", "base"]
 
 [[package]]
 name = "dimos-lcm"

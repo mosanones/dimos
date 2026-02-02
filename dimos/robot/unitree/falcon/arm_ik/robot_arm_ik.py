@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import numpy as np
 import pinocchio as pin
 from pinocchio import Quaternion
@@ -5,7 +19,7 @@ from pinocchio import Quaternion
 from .weighted_moving_filter import WeightedMovingFilter
 
 
-class G1_29_ArmIK:  # noqa: N801
+class G1_29_ArmIK:
     """Pinocchio-only dual-arm IK with optional collision checking.
 
     This replaces Falcon's Casadi/IPOPT optimization with a damped least-squares
@@ -13,13 +27,15 @@ class G1_29_ArmIK:  # noqa: N801
     via pip/uv (no pinocchio.casadi bindings required).
     """
 
-    def __init__(self, Unit_Test=False, Visualization=False, robot_config=None):  # noqa: N803
+    def __init__(self, Unit_Test=False, Visualization=False, robot_config=None):
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
         self.Unit_Test = Unit_Test
         self.Visualization = Visualization
 
-        self.robot = pin.RobotWrapper.BuildFromURDF(robot_config["ASSET_FILE"], robot_config["ASSET_ROOT"])
+        self.robot = pin.RobotWrapper.BuildFromURDF(
+            robot_config["ASSET_FILE"], robot_config["ASSET_ROOT"]
+        )
 
         self.mixed_jointsToLockIDs = [
             "left_hip_pitch_joint",
@@ -69,7 +85,10 @@ class G1_29_ArmIK:  # noqa: N801
             robot_config["ASSET_ROOT"],
         )
         self.geom_model.addAllCollisionPairs()
-        adjacent_pairs = {(self.reduced_robot.model.parents[i], i) for i in range(1, self.reduced_robot.model.njoints)}
+        adjacent_pairs = {
+            (self.reduced_robot.model.parents[i], i)
+            for i in range(1, self.reduced_robot.model.njoints)
+        }
         filtered_pairs = []
         for cp in self.geom_model.collisionPairs:
             link1 = self.geom_model.geometryObjects[cp.first].parentJoint
@@ -105,7 +124,9 @@ class G1_29_ArmIK:  # noqa: N801
         self.tol = 1e-3
 
     def check_self_collision(self, q):
-        pin.computeCollisions(self.reduced_robot.model, self.data, self.geom_model, self.geom_data, q, False)
+        pin.computeCollisions(
+            self.reduced_robot.model, self.data, self.geom_model, self.geom_data, q, False
+        )
         for k in range(len(self.geom_model.collisionPairs)):
             if self.geom_data.collisionResults[k].isCollision():
                 return True
@@ -123,11 +144,17 @@ class G1_29_ArmIK:  # noqa: N801
         return np.asarray(pin.log6(dT).vector, dtype=np.float64).reshape(6)
 
     def _frame_jacobian_local(self, fid: int, q: np.ndarray) -> np.ndarray:
-        J = pin.computeFrameJacobian(self.reduced_robot.model, self.data, q, fid, pin.ReferenceFrame.LOCAL)
+        J = pin.computeFrameJacobian(
+            self.reduced_robot.model, self.data, q, fid, pin.ReferenceFrame.LOCAL
+        )
         return np.asarray(J, dtype=np.float64)
 
     def solve_ik(self, left_wrist, right_wrist, current_lr_arm_motor_q=None, collision_check=True):
-        q = self.init_data.copy() if current_lr_arm_motor_q is None else np.array(current_lr_arm_motor_q, dtype=np.float64).copy()
+        q = (
+            self.init_data.copy()
+            if current_lr_arm_motor_q is None
+            else np.array(current_lr_arm_motor_q, dtype=np.float64).copy()
+        )
 
         T_L = pin.SE3(left_wrist[:3, :3], left_wrist[:3, 3])
         T_R = pin.SE3(right_wrist[:3, :3], right_wrist[:3, 3])
@@ -157,7 +184,10 @@ class G1_29_ArmIK:  # noqa: N801
             dq = np.linalg.solve(A, b)
 
             q = pin.integrate(self.reduced_robot.model, q, float(self.alpha) * dq)
-            q = np.minimum(np.maximum(q, self.reduced_robot.model.lowerPositionLimit), self.reduced_robot.model.upperPositionLimit)
+            q = np.minimum(
+                np.maximum(q, self.reduced_robot.model.lowerPositionLimit),
+                self.reduced_robot.model.upperPositionLimit,
+            )
 
         self.smooth_filter.add_data(q)
         q_smooth = np.asarray(self.smooth_filter.filtered_data, dtype=np.float64).copy()
@@ -169,23 +199,35 @@ class G1_29_ArmIK:  # noqa: N801
         sol_tauff = np.zeros(self.reduced_robot.model.nv, dtype=np.float64)
         return q_smooth, sol_tauff
 
-    def set_initial_poses(self, L_tf, R_tf, L_orientation, R_orientation):  # noqa: N803
+    def set_initial_poses(self, L_tf, R_tf, L_orientation, R_orientation):
         self.current_L_tf = L_tf.copy()
         self.current_R_tf = R_tf.copy()
         self.current_L_orientation = Quaternion(L_orientation)
         self.current_R_orientation = Quaternion(R_orientation)
 
-    def get_q_tau(self, L_tf_target, R_tf_target, EE_efrc_L, EE_efrc_R):  # noqa: N803
-        self.current_L_tf = (1 - self.speed_factor) * self.current_L_tf + self.speed_factor * L_tf_target.translation
-        self.current_R_tf = (1 - self.speed_factor) * self.current_R_tf + self.speed_factor * R_tf_target.translation
+    def get_q_tau(self, L_tf_target, R_tf_target, EE_efrc_L, EE_efrc_R):
+        self.current_L_tf = (
+            1 - self.speed_factor
+        ) * self.current_L_tf + self.speed_factor * L_tf_target.translation
+        self.current_R_tf = (
+            1 - self.speed_factor
+        ) * self.current_R_tf + self.speed_factor * R_tf_target.translation
 
-        self.current_L_orientation = self.current_L_orientation.slerp(self.speed_factor, Quaternion(L_tf_target.rotation))
-        self.current_R_orientation = self.current_R_orientation.slerp(self.speed_factor, Quaternion(R_tf_target.rotation))
+        self.current_L_orientation = self.current_L_orientation.slerp(
+            self.speed_factor, Quaternion(L_tf_target.rotation)
+        )
+        self.current_R_orientation = self.current_R_orientation.slerp(
+            self.speed_factor, Quaternion(R_tf_target.rotation)
+        )
 
-        L_tf_interpolated = pin.SE3(self.current_L_orientation.toRotationMatrix(), self.current_L_tf)
-        R_tf_interpolated = pin.SE3(self.current_R_orientation.toRotationMatrix(), self.current_R_tf)
+        L_tf_interpolated = pin.SE3(
+            self.current_L_orientation.toRotationMatrix(), self.current_L_tf
+        )
+        R_tf_interpolated = pin.SE3(
+            self.current_R_orientation.toRotationMatrix(), self.current_R_tf
+        )
 
-        sol_q, sol_tauff = self.solve_ik(L_tf_interpolated.homogeneous, R_tf_interpolated.homogeneous, collision_check=True)
+        sol_q, sol_tauff = self.solve_ik(
+            L_tf_interpolated.homogeneous, R_tf_interpolated.homogeneous, collision_check=True
+        )
         return sol_q, sol_tauff
-
-

@@ -49,6 +49,8 @@ _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
 
+from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
+
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.gradient import gradient
@@ -56,7 +58,6 @@ from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder

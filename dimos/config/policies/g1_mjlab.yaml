@@ -1,0 +1,4 @@
+policy_type: mjlab_velocity
+policy_path: data/mujoco_sim/unitree_g1_mjlab/policy.onnx
+robot_type: g1
+mode_pr: 0

@@ -1,19 +1,37 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
 # pyright: reportMissingModuleSource=false
-
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from dimos.robot.unitree.falcon.loco_manip_core import FalconLocoManipCore
-from dimos.robot.unitree.sdk2.joints import G1_SDK2_MOTOR_JOINT_NAMES
+from dimos.robot.unitree.lowlevel.joints import G1_LOWLEVEL_MOTOR_JOINT_NAMES
 from dimos.utils.logging_config import setup_logger
 
-from ..types import CommandContext, JointTargets, RobotState
+from ..runtime.types import CommandContext, JointTargets, RobotState
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 logger = setup_logger()
+
 
 class FalconLocoManipAdapter:
     """Adapter for FALCON loco_manip ONNX policies.
@@ -38,13 +56,20 @@ class FalconLocoManipAdapter:
             policy_action_scale=policy_action_scale,
             providers=providers,
         )
-        self._joint_names = list(G1_SDK2_MOTOR_JOINT_NAMES)
+        self.cfg = self._core.cfg
+        self._obs_buf_dict = self._core.obs_buf_dict
+        self._obs_dim_dict = self._core.obs_dim_dict
+        self._joint_names = list(G1_LOWLEVEL_MOTOR_JOINT_NAMES)
 
         # Defaults for runtime hold behavior (motor order).
         self.default_kp = self._core.cfg.motor_kp.astype(np.float32)
         self.default_kd = self._core.cfg.motor_kd.astype(np.float32)
 
-        logger.info("FalconLocoManipAdapter loaded", policy_path=policy_path, falcon_yaml=str(Path(falcon_yaml_path)))
+        logger.info(
+            "FalconLocoManipAdapter loaded",
+            policy_path=policy_path,
+            falcon_yaml=str(Path(falcon_yaml_path)),
+        )
 
     @property
     def joint_names(self) -> list[str]:
@@ -53,12 +78,17 @@ class FalconLocoManipAdapter:
     def reset(self) -> None:
         self._core.reset()
 
-    def _parse_obs(self, current_obs_buffer_dict: dict[str, NDArray[np.floating]]) -> dict[str, NDArray[np.floating]]:
+    def _parse_obs(
+        self, current_obs_buffer_dict: dict[str, NDArray[np.floating]]
+    ) -> dict[str, NDArray[np.floating]]:
         current_obs_dict: dict[str, NDArray[np.floating]] = {}
         for key in self.cfg.obs_dict:
             obs_list = sorted(self.cfg.obs_dict[key])
             current_obs_dict[key] = np.concatenate(
-                [current_obs_buffer_dict[name] * float(self.cfg.obs_scales[name]) for name in obs_list],
+                [
+                    current_obs_buffer_dict[name] * float(self.cfg.obs_scales[name])
+                    for name in obs_list
+                ],
                 axis=1,
             ).astype(np.float32)
         return current_obs_dict
@@ -84,7 +114,9 @@ class FalconLocoManipAdapter:
         dq[3:6] = state.base_ang_vel.astype(np.float64, copy=False)
         dq[6 : 6 + 29] = state.dq.astype(np.float64, copy=False)
 
-        robot_state_data = np.array(q.tolist() + dq.tolist() + tau_est.tolist() + ddq.tolist(), dtype=np.float64).reshape(1, -1)
+        robot_state_data = np.array(
+            q.tolist() + dq.tolist() + tau_est.tolist() + ddq.tolist(), dtype=np.float64
+        ).reshape(1, -1)
 
         stand = bool(ctx.extra.get("stand", True)) if "stand" in ctx.extra else bool(ctx.stand)
         upper_body_ik_enabled = bool(ctx.extra.get("upper_body_ik_enabled", False))
@@ -104,9 +136,9 @@ class FalconLocoManipAdapter:
             ee_yaw_deg=ee_yaw_deg if upper_body_ik_enabled else 0.0,
         )
 
-        q_target, kp, kd = self._core.step(robot_state_data=robot_state_data, upper_body_collision_check=upper_body_collision_check)
+        q_target, kp, kd = self._core.step(
+            robot_state_data=robot_state_data, upper_body_collision_check=upper_body_collision_check
+        )
         kp = (kp.astype(np.float32) * float(ctx.kp_scale)).astype(np.float32)
         kd = (kd.astype(np.float32) * float(ctx.kp_scale)).astype(np.float32)
         return JointTargets(q_target=q_target.astype(np.float32), kp=kp, kd=kd)
-
-

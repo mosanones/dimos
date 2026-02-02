@@ -16,6 +16,7 @@
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
@@ -28,9 +29,8 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
+from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -74,7 +74,9 @@ class G1SimConnection(Module):
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
         self._disposables.add(Disposable(self.policy_enable.subscribe(self.set_policy_enable)))
         self._disposables.add(Disposable(self.policy_estop.subscribe(self.set_policy_estop)))
-        self._disposables.add(Disposable(self.policy_params_json.subscribe(self.set_policy_params_json)))
+        self._disposables.add(
+            Disposable(self.policy_params_json.subscribe(self.set_policy_params_json))
+        )
         self._disposables.add(self.connection.odom_stream().subscribe(self._publish_sim_odom))
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
 

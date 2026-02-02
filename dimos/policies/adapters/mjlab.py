@@ -1,18 +1,33 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
 # pyright: reportMissingModuleSource=false
-
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import onnxruntime as ort
-from numpy.typing import NDArray
 
 from dimos.utils.logging_config import setup_logger
 
-from ..types import CommandContext, JointTargets, RobotState
+from ..runtime.types import CommandContext, JointTargets, RobotState
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 logger = setup_logger()
 
@@ -49,7 +64,9 @@ class MjlabVelocityAdapter:
     """Adapter for MJLab-exported velocity policies (99-dim obs, residual joint targets)."""
 
     def __init__(self, *, policy_path: str, providers: list[str] | None = None) -> None:
-        self.session = ort.InferenceSession(policy_path, providers=providers or ort.get_available_providers())
+        self.session = ort.InferenceSession(
+            policy_path, providers=providers or ort.get_available_providers()
+        )
         self.input_name = self.session.get_inputs()[0].name
         self.metadata = _load_mjlab_metadata(self.session)
 
@@ -73,7 +90,7 @@ class MjlabVelocityAdapter:
         self._prev_actions[:] = 0.0
 
     def step(self, state: RobotState, ctx: CommandContext) -> JointTargets:
-        # MJLab obs layout (matches existing SDK2PolicyRunner):
+        # MJLab obs layout (matches the legacy policy runner):
         # [base_lin_vel(3), base_ang_vel(3), projected_gravity(3),
         #  joint_pos_rel(N), joint_vel(N), last_action(N), command(3)]
         q_rel = (state.q - self.metadata.default_joint_pos).astype(np.float32, copy=False)
@@ -95,10 +112,10 @@ class MjlabVelocityAdapter:
         actions = np.clip(actions, -10.0, 10.0)
         self._prev_actions = actions.copy()
 
-        q_target = (self.metadata.default_joint_pos + actions * self.metadata.action_scale).astype(np.float32)
+        q_target = (self.metadata.default_joint_pos + actions * self.metadata.action_scale).astype(
+            np.float32
+        )
         kp = self.metadata.joint_stiffness.astype(np.float32) * float(ctx.kp_scale)
         kd = self.metadata.joint_damping.astype(np.float32) * float(ctx.kp_scale)
 
         return JointTargets(q_target=q_target, kp=kp, kd=kd)
-
-

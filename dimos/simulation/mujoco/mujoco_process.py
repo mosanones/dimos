@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # pyright: reportMissingImports=false
 # pyright: reportMissingModuleSource=false
 
@@ -44,7 +58,7 @@ from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
 from dimos.simulation.mujoco.model import (
     load_bundle_json,
     load_model,
-    load_model_sdk2,
+    load_model_unitree_dds,
     load_scene_xml,
 )
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
@@ -138,15 +152,15 @@ def _step_or_mirror(
     model: mujoco.MjModel,
     data: mujoco.MjData,
     config: GlobalConfig,
-    sdk2_bridge: Any | None,
-    sdk2_mirror: Any | None,
+    unitree_bridge: Any | None,
+    unitree_mirror: Any | None,
     elastic_band: ElasticBand,
     gantry_body_id: int,
     last_sim_time: float,
 ) -> float:
     """Advance simulation one rendered frame (or mirror the real robot)."""
-    if sdk2_mirror is not None:
-        sdk2_mirror.apply_to_mujoco()
+    if unitree_mirror is not None:
+        unitree_mirror.apply_to_mujoco()
         mujoco.mj_forward(model, data)
         return float(data.time)
 
@@ -159,14 +173,14 @@ def _step_or_mirror(
                 data.xfrc_applied[gantry_body_id, 0:3] = 0.0
 
         mujoco.mj_step(model, data)
-        if sdk2_bridge is not None:
-            sdk2_bridge.publish_state()
+        if unitree_bridge is not None:
+            unitree_bridge.publish_state()
 
     # Reset detection (viewer backspace): time jumps backwards.
-    if sdk2_bridge is not None:
+    if unitree_bridge is not None:
         sim_time = float(data.time)
         if sim_time + 1e-9 < last_sim_time:
-            sdk2_bridge.on_mujoco_reset()
+            unitree_bridge.on_mujoco_reset()
             if gantry_body_id >= 0:
                 elastic_band.reset_to_pose(data.xpos[gantry_body_id].copy())
         return sim_time
@@ -218,23 +232,23 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     profile = config.mujoco_profile
     scene_xml = load_scene_xml(config)
 
-    # SDK2 controllers:
-    # - sdk2: bridge subscribes lowcmd and publishes lowstate (simulated robot)
+    # Unitree DDS controllers:
+    # - unitree_dds: bridge subscribes lowcmd and publishes lowstate (simulated robot)
     # - mirror: subscribes real robot lowstate and mirrors it into MuJoCo for rendering (no DDS publishing)
-    sdk2_bridge = None
-    sdk2_mirror = None
+    unitree_bridge = None
+    unitree_mirror = None
 
-    if config.mujoco_control_mode in ("sdk2", "mirror"):
-        # SDK2 mode: load model without ONNX policy, use DDS bridge for control
-        # SDK2BridgeController is created later, after mj_forward updates sensors
-        model, data = load_model_sdk2(
+    if config.mujoco_control_mode in ("unitree_dds", "mirror"):
+        # Unitree DDS mode: load model without ONNX policy, use DDS bridge for control
+        # UnitreeDDSBridgeController is created later, after mj_forward updates sensors
+        model, data = load_model_unitree_dds(
             robot=robot_name,
             scene_xml=scene_xml,
             profile=profile,
         )
-        # Debug: verify keyframe was applied in load_model_sdk2
+        # Debug: verify keyframe was applied in load_model_unitree_dds
         logger.info(
-            "SDK2 model loaded",
+            "Unitree DDS model loaded",
             nkey=model.nkey,
             qpos_joints_0_5=data.qpos[7:13].tolist(),
             expected_joints=[-0.312, 0, 0, 0.669, -0.363, 0],
@@ -266,48 +280,52 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     mujoco.mj_forward(model, data)
 
-    # Create SDK2 controller AFTER mj_forward so sensors are updated from keyframe
-    if config.mujoco_control_mode == "sdk2":
+    # Create Unitree DDS controller AFTER mj_forward so sensors are updated from keyframe
+    if config.mujoco_control_mode == "unitree_dds":
         # Debug: verify qpos and sensordata after mj_forward
         logger.info(
             "After mj_forward",
             qpos_joints_0_5=data.qpos[7:13].tolist(),
             sensordata_0_5=data.sensordata[0:6].tolist(),
         )
-        from dimos.simulation.mujoco.sdk2_bridge import (
-            SDK2BridgeConfig,
-            SDK2BridgeController,
+        from dimos.simulation.mujoco.unitree_dds_bridge import (
+            UnitreeDDSBridgeConfig,
+            UnitreeDDSBridgeController,
         )
-        sdk2_bridge = SDK2BridgeController(
+
+        unitree_bridge = UnitreeDDSBridgeController(
             model,
             data,
-            SDK2BridgeConfig(
-                domain_id=config.sdk2_domain_id,
-                interface=config.sdk2_interface,
+            UnitreeDDSBridgeConfig(
+                domain_id=config.unitree_domain_id,
+                interface=config.unitree_interface,
                 robot_type=robot_name.replace("unitree_", ""),  # "g1" -> "g1"
             ),
         )
         logger.info(
-            "SDK2 bridge mode enabled",
-            domain_id=config.sdk2_domain_id,
-            interface=config.sdk2_interface,
+            "Unitree DDS bridge mode enabled",
+            domain_id=config.unitree_domain_id,
+            interface=config.unitree_interface,
         )
     elif config.mujoco_control_mode == "mirror":
-        from dimos.simulation.mujoco.sdk2_bridge import SDK2BridgeConfig, SDK2MirrorController
+        from dimos.simulation.mujoco.unitree_dds_bridge import (
+            UnitreeDDSBridgeConfig,
+            UnitreeDDSMirrorController,
+        )
 
-        sdk2_mirror = SDK2MirrorController(
+        unitree_mirror = UnitreeDDSMirrorController(
             model,
             data,
-            SDK2BridgeConfig(
-                domain_id=config.sdk2_domain_id,
-                interface=config.sdk2_interface,
+            UnitreeDDSBridgeConfig(
+                domain_id=config.unitree_domain_id,
+                interface=config.unitree_interface,
                 robot_type=robot_name.replace("unitree_", ""),  # "g1" -> "g1"
             ),
         )
         logger.info(
-            "SDK2 mirror mode enabled (subscriber-only)",
-            domain_id=config.sdk2_domain_id,
-            interface=config.sdk2_interface,
+            "Unitree DDS mirror mode enabled (subscriber-only)",
+            domain_id=config.unitree_domain_id,
+            interface=config.unitree_interface,
         )
 
     # Camera naming can differ per profile bundle. If bundle.json exists, use it.
@@ -435,8 +453,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                 model=model,
                 data=data,
                 config=config,
-                sdk2_bridge=sdk2_bridge,
-                sdk2_mirror=sdk2_mirror,
+                unitree_bridge=unitree_bridge,
+                unitree_mirror=unitree_mirror,
                 elastic_band=elastic_band,
                 gantry_body_id=gantry_body_id,
                 last_sim_time=last_sim_time,

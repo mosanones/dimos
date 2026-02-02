@@ -60,11 +60,6 @@ def _legacy_profile_xml_path(profile: str) -> epath.Path:
     return _get_data_dir() / f"{profile}.xml"
 
 
-def _legacy_profile_policy_path(profile: str) -> epath.Path:
-    # Legacy layout (older integration): data/mujoco_sim/<profile>_policy.onnx
-    return _get_data_dir() / f"{profile}_policy.onnx"
-
-
 def load_bundle_json(profile: str) -> dict[str, object] | None:
     """Load optional bundle.json for a MuJoCo profile.
 
@@ -152,11 +147,13 @@ def load_model(
     n_substeps = round(ctrl_dt / sim_dt)
     model.opt.timestep = sim_dt
 
-    # Resolve policy path. Prefer new bundle layout; fall back to legacy flat files.
-    if profile and _bundle_policy_path(profile).exists():
-        policy_path = _bundle_policy_path(profile).as_posix()
-    else:
-        policy_path = (_legacy_profile_policy_path(include_name)).as_posix()
+    # Resolve policy path. Require the bundle layout.
+    policy_candidate = _bundle_policy_path(profile or robot)
+    if not policy_candidate.exists():
+        raise FileNotFoundError(
+            f"Policy ONNX not found. Expected bundle layout at {policy_candidate.as_posix()}"
+        )
+    policy_path = policy_candidate.as_posix()
 
     # Default joint angles used for legacy controllers and as a shape reference.
     # Some MJLab-exported bundles use "init_state" and may not provide "home".
@@ -240,12 +237,12 @@ def get_model_xml(*, robot: str, scene_xml: str, profile: str | None = None) -> 
     return ET.tostring(root, encoding="unicode")
 
 
-def load_model_sdk2(
+def load_model_unitree_dds(
     robot: str, scene_xml: str, *, profile: str | None = None
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
-    """Load MuJoCo model without ONNX policy for SDK2 bridge mode.
+    """Load MuJoCo model without ONNX policy for Unitree DDS bridge mode.
 
-    In SDK2 mode, motor control is handled by the SDK2BridgeController
+    In Unitree DDS mode, motor control is handled by the UnitreeDDSBridgeController
     which receives commands via DDS and applies PD control directly.
     No policy callback is registered - mj_step uses data.ctrl directly.
 
@@ -266,9 +263,11 @@ def load_model_sdk2(
     # Apply keyframe if available
     if model.nkey > 0:
         mujoco.mj_resetDataKeyframe(model, data, 0)
-        print(f"[load_model_sdk2] Applied keyframe 0, qpos[7:13] = {data.qpos[7:13].tolist()}")
+        print(
+            f"[load_model_unitree_dds] Applied keyframe 0, qpos[7:13] = {data.qpos[7:13].tolist()}"
+        )
     else:
-        print(f"[load_model_sdk2] WARNING: No keyframes in model (nkey={model.nkey})")
+        print(f"[load_model_unitree_dds] WARNING: No keyframes in model (nkey={model.nkey})")
 
     # Set timestep based on robot type (matching load_model behavior)
     match robot:

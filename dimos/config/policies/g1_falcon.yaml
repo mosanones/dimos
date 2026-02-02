@@ -1,0 +1,6 @@
+policy_type: falcon_loco_manip
+policy_path: data/mujoco_sim/unitree_g1_falcon/policy.onnx
+policy_config: data/mujoco_sim/unitree_g1_falcon/g1_29dof_falcon.yaml
+policy_action_scale: 0.25
+robot_type: g1
+mode_pr: 0

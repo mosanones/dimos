@@ -22,7 +22,6 @@ import base64
 from collections.abc import Callable
 import functools
 import json
-from pathlib import Path
 import pickle
 import subprocess
 import sys
@@ -39,13 +38,22 @@ from reactivex.disposable import Disposable
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.policies.runtime import (
+    PolicyRuntimeCompute,
+    PolicyRuntimeComputeConfig,
+    build_policy_adapter,
+    load_policy_spec,
+)
+from dimos.robot.unitree.transport.unitree_dds_lowlevel import (
+    UnitreeDDSRobotIO,
+    UnitreeDDSRobotIOConfig,
+)
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import LAUNCHER_PATH, LIDAR_FPS, VIDEO_FPS
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.policies.sdk2.factory import PolicyFactory, PolicyFactoryConfig
 
 ODOM_FREQUENCY = 50
 
@@ -86,8 +94,9 @@ class MujocoConnection:
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
-        # SDK2 policy runner
-        self._policy_runner: Any = None
+        # Unitree DDS policy runtime (host-side)
+        self._policy_runtime: PolicyRuntimeCompute | None = None
+        self._policy_io: UnitreeDDSRobotIO | None = None
         self._policy_thread: threading.Thread | None = None
         self._policy_stop_event: threading.Event | None = None
 
@@ -125,8 +134,8 @@ class MujocoConnection:
                 raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
             if self.shm_data.is_ready():
                 logger.info("MuJoCo process started successfully")
-                # Start SDK2 policy runner if configured
-                self._start_sdk2_policy_runner()
+                # Start Unitree DDS policy runtime if configured
+                self._start_unitree_policy_module()
                 return
             time.sleep(0.1)
 
@@ -134,14 +143,16 @@ class MujocoConnection:
         self.stop()
         raise RuntimeError("MuJoCo process failed to start (timeout)")
 
-    def _start_sdk2_policy_runner(self) -> None:
-        """Start the SDK2 policy runner if configured."""
-        if self.global_config.mujoco_control_mode not in ("sdk2", "mirror"):
+    def _start_unitree_policy_module(self) -> None:
+        """Start the Unitree DDS policy runtime if configured."""
+        if self.global_config.mujoco_control_mode not in ("unitree_dds", "mirror"):
             return
 
-        profile = self.global_config.mujoco_profile
-        if not profile:
-            logger.warning("SDK2 mode enabled but no profile specified, skipping policy runner")
+        spec = load_policy_spec(self.global_config)
+        if spec is None:
+            logger.warning(
+                "Unitree DDS mode enabled but no policy specified, skipping policy runtime"
+            )
             return
 
         self._policy_stop_event = threading.Event()
@@ -150,28 +161,31 @@ class MujocoConnection:
             try:
                 # Wait a bit for the simulator to fully initialize
                 time.sleep(1.0)
-                runner = PolicyFactory.from_profile(
-                    profile,
-                    PolicyFactoryConfig(
-                        domain_id=self.global_config.sdk2_domain_id,
-                        interface=self.global_config.sdk2_interface,
-                        control_dt=0.02,
-                    ),
-                )
-                if runner is None:
-                    return
-                self._policy_runner = runner
 
-                logger.info("SDK2 policy runner started")
+                adapter = build_policy_adapter(spec)
+                runtime = PolicyRuntimeCompute(
+                    adapter=adapter,
+                    config=PolicyRuntimeComputeConfig(robot_type=spec.robot_type),
+                )
+                self._policy_runtime = runtime
+
+                self._policy_io = UnitreeDDSRobotIO(
+                    UnitreeDDSRobotIOConfig(
+                        domain_id=self.global_config.unitree_domain_id,
+                        interface=self.global_config.unitree_interface,
+                        robot_type=spec.robot_type,
+                        mode_pr=int(spec.mode_pr),
+                    )
+                )
+
+                logger.info("Unitree DDS policy runtime started", policy_type=spec.policy_type)
 
                 # Apply any latched safety state immediately.
                 try:
-                    if hasattr(self._policy_runner, "set_estop"):
-                        self._policy_runner.set_estop(self._desired_policy_estop)  # type: ignore[attr-defined]
-                    if hasattr(self._policy_runner, "set_enabled"):
-                        self._policy_runner.set_enabled(self._desired_policy_enabled)  # type: ignore[attr-defined]
-                    if hasattr(self._policy_runner, "set_policy_params_json") and self._desired_policy_params_json:
-                        self._policy_runner.set_policy_params_json(self._desired_policy_params_json)  # type: ignore[attr-defined]
+                    runtime.set_estop(self._desired_policy_estop)
+                    runtime.set_enabled(self._desired_policy_enabled)
+                    if self._desired_policy_params_json:
+                        runtime.set_policy_params_json(self._desired_policy_params_json)
                     logger.info(
                         "Applied latched policy safety state",
                         enabled=self._desired_policy_enabled,
@@ -180,19 +194,25 @@ class MujocoConnection:
                 except Exception as e:
                     logger.warning(f"Failed applying latched safety state: {e}")
 
+                control_dt = 0.02
                 while not self._policy_stop_event.is_set():
                     step_start = time.perf_counter()
-                    if hasattr(self._policy_runner, "step"):
-                        self._policy_runner.step()  # type: ignore[attr-defined]
+                    state = self._policy_io.get_state() if self._policy_io else None
+                    if state is not None:
+                        cmd = runtime.step(state)
+                        if cmd is not None and self._policy_io is not None:
+                            self._policy_io.write_command(cmd)
                     elapsed = time.perf_counter() - step_start
-                    sleep_time = 0.02 - elapsed
+                    sleep_time = control_dt - elapsed
                     if sleep_time > 0:
                         time.sleep(sleep_time)
 
             except Exception as e:
-                logger.error(f"SDK2 policy runner error: {e}")
+                logger.error(f"Unitree DDS policy runtime error: {e}")
 
-        self._policy_thread = threading.Thread(target=run_policy, daemon=True, name="SDK2PolicyRunner")
+        self._policy_thread = threading.Thread(
+            target=run_policy, daemon=True, name="UnitreePolicyRuntime"
+        )
         self._policy_thread.start()
 
     def stop(self) -> None:
@@ -213,14 +233,15 @@ class MujocoConnection:
             self._stop_timer.cancel()
             self._stop_timer = None
 
-        # Stop SDK2 policy runner
+        # Stop Unitree DDS policy runtime
         if self._policy_stop_event:
             self._policy_stop_event.set()
         if self._policy_thread and self._policy_thread.is_alive():
             self._policy_thread.join(timeout=2.0)
             if self._policy_thread.is_alive():
-                logger.warning("SDK2 policy runner did not stop gracefully")
-        self._policy_runner = None
+                logger.warning("Unitree DDS policy runtime did not stop gracefully")
+        self._policy_runtime = None
+        self._policy_io = None
         self._policy_thread = None
         self._policy_stop_event = None
 
@@ -374,9 +395,9 @@ class MujocoConnection:
         if self._is_cleaned_up:
             return True
 
-        # SDK2 mode: send velocity command to policy runner
-        if self._policy_runner is not None:
-            self._policy_runner.set_command(
+        # Unitree DDS mode: send velocity command to policy runtime
+        if self._policy_runtime is not None:
+            self._policy_runtime.set_cmd_vel(
                 twist.linear.x,
                 twist.linear.y,
                 twist.angular.z,
@@ -384,7 +405,9 @@ class MujocoConnection:
         elif self.shm_data is not None:
             # ONNX mode: send to shared memory
             linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
-            angular = np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32)
+            angular = np.array(
+                [twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32
+            )
             self.shm_data.write_command(linear, angular)
 
         if duration > 0:
@@ -392,8 +415,8 @@ class MujocoConnection:
                 self._stop_timer.cancel()
 
             def stop_movement() -> None:
-                if self._policy_runner is not None:
-                    self._policy_runner.set_command(0.0, 0.0, 0.0)
+                if self._policy_runtime is not None:
+                    self._policy_runtime.set_cmd_vel(0.0, 0.0, 0.0)
                 elif self.shm_data:
                     self.shm_data.write_command(
                         np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
@@ -406,25 +429,25 @@ class MujocoConnection:
         return True
 
     def set_policy_enabled(self, enabled: bool) -> None:
-        """Enable/disable the SDK2 policy runner (no-op when not running in SDK2 mode)."""
+        """Enable/disable the Unitree DDS policy runtime."""
         self._desired_policy_enabled = bool(enabled)
-        if self._policy_runner is not None and hasattr(self._policy_runner, "set_enabled"):
-            self._policy_runner.set_enabled(bool(enabled))
+        if self._policy_runtime is not None:
+            self._policy_runtime.set_enabled(bool(enabled))
 
     def set_policy_estop(self, estop: bool) -> None:
-        """Latch/unlatch E-stop on the SDK2 policy runner (no-op when not running in SDK2 mode)."""
+        """Latch/unlatch E-stop on the Unitree DDS policy runtime."""
         self._desired_policy_estop = bool(estop)
         if self._desired_policy_estop:
             # Match runner behavior: estop forces disabled.
             self._desired_policy_enabled = False
-        if self._policy_runner is not None and hasattr(self._policy_runner, "set_estop"):
-            self._policy_runner.set_estop(bool(estop))
+        if self._policy_runtime is not None:
+            self._policy_runtime.set_estop(bool(estop))
 
     def set_policy_params_json(self, params_json: str) -> None:
         """Update policy params JSON (forwarded to policy runtime/adapters)."""
         self._desired_policy_params_json = str(params_json or "")
-        if self._policy_runner is not None and hasattr(self._policy_runner, "set_policy_params_json"):
-            self._policy_runner.set_policy_params_json(self._desired_policy_params_json)
+        if self._policy_runtime is not None:
+            self._policy_runtime.set_policy_params_json(self._desired_policy_params_json)
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         print(f"publishing request, topic={topic}, data={data}")

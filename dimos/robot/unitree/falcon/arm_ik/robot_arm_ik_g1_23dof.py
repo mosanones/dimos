@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import numpy as np
 import pinocchio as pin
 
@@ -5,14 +19,17 @@ from .robot_arm_ik import G1_29_ArmIK
 from .weighted_moving_filter import WeightedMovingFilter
 
 
-class G1_29_ArmIK_NoWrists(G1_29_ArmIK):  # noqa: N801
+class G1_29_ArmIK_NoWrists(G1_29_ArmIK):
     """Vendored from FALCON/sim2real/utils/arm_ik/robot_arm_ik_g1_23dof.py (visualization removed)."""
 
-    def __init__(self, Unit_Test=False, Visualization=False, robot_config=None):  # noqa: N803
-        super().__init__(Unit_Test=Unit_Test, Visualization=Visualization, robot_config=robot_config)
+    def __init__(self, Unit_Test=False, Visualization=False, robot_config=None):
+        super().__init__(
+            Unit_Test=Unit_Test, Visualization=Visualization, robot_config=robot_config
+        )
 
         # Lock wrist joints (no wrists)
-        self.mixed_jointsToLockIDs = self.mixed_jointsToLockIDs + [
+        self.mixed_jointsToLockIDs = [
+            *self.mixed_jointsToLockIDs,
             "left_wrist_pitch_joint",
             "left_wrist_roll_joint",
             "left_wrist_yaw_joint",
@@ -52,7 +69,10 @@ class G1_29_ArmIK_NoWrists(G1_29_ArmIK):  # noqa: N801
             robot_config["ASSET_ROOT"],
         )
         self.geom_model.addAllCollisionPairs()
-        adjacent_pairs = {(self.reduced_robot.model.parents[i], i) for i in range(1, self.reduced_robot.model.njoints)}
+        adjacent_pairs = {
+            (self.reduced_robot.model.parents[i], i)
+            for i in range(1, self.reduced_robot.model.njoints)
+        }
         filtered_pairs = []
         for cp in self.geom_model.collisionPairs:
             link1 = self.geom_model.geometryObjects[cp.first].parentJoint
@@ -71,5 +91,3 @@ class G1_29_ArmIK_NoWrists(G1_29_ArmIK):  # noqa: N801
         # Frame ids
         self.L_hand_id = self.reduced_robot.model.getFrameId("L_ee")
         self.R_hand_id = self.reduced_robot.model.getFrameId("R_ee")
-
-

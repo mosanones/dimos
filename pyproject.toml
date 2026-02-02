@@ -168,7 +168,7 @@ unitree = [
 ]
 
 falcon = [
-    "dimos[sdk2]",
+    "dimos[unitree_dds]",
     "pyyaml>=6.0",
     # Pinocchio is provided by the `pin` package on pip (import name: `pinocchio`).
     # We intentionally avoid Casadi-based Pinocchio bindings for easier installability.
@@ -259,8 +259,8 @@ sim = [
     "pygame>=2.6.1",
 ]
 
-sdk2 = [
-    # Unitree SDK2 for direct robot control (requires cyclonedds)
+unitree_dds = [
+    # Unitree DDS for direct robot control (requires cyclonedds)
     "unitree-sdk2py",
 ]
 

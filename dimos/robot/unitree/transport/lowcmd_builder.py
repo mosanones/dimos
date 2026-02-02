@@ -1,35 +1,49 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 @dataclass
-class LowCmdBuilderConfig:
+class UnitreeLowCmdBuilderConfig:
     robot_type: str = "g1"
     mode_pr: int = 0  # Unitree HG: 0=PR, 1=AB
 
 
-class LowCmdBuilder:
-    """Build SDK2 LowCmd messages (HG vs GO) from per-joint targets in motor order."""
+class UnitreeLowCmdBuilder:
+    """Build Unitree LowCmd messages (HG vs GO) from per-joint targets in motor order."""
 
-    def __init__(self, config: LowCmdBuilderConfig) -> None:
+    def __init__(self, config: UnitreeLowCmdBuilderConfig) -> None:
         self.config = config
 
-        # Lazy import SDK2 types so non-SDK2 users don't need unitree_sdk2py installed.
+        # Lazy import Unitree DDS types so non-Unitree users don't need unitree_sdk2py installed.
         if config.robot_type in ("g1", "h1_2"):
             from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as LowCmd_default
 
             self._create_lowcmd = LowCmd_default
-            self._is_hg = True
         else:
             from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_ as LowCmd_default
 
             self._create_lowcmd = LowCmd_default
-            self._is_hg = False
 
         # CRC is required by real robot; harmless in sim.
         try:
@@ -81,5 +95,3 @@ class LowCmdBuilder:
                 pass
 
         return cmd
-
-

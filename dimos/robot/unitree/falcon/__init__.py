@@ -4,5 +4,3 @@ This package vendors a minimal, behavior-faithful subset of the FALCON repo need
 to run the `loco_manip` policy inside Dimos with the Command Center as the sole
 control surface (no Falcon keyboard/gamepad threads).
 """
-
-

@@ -1,15 +1,26 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.typing import NDArray
 
-from dimos.robot.unitree.sdk2.joints import G1_SDK2_MOTOR_JOINT_NAMES
-
-# Back-compat alias (prefer importing from dimos.robot.unitree.sdk2.joints).
-G1_MOTOR_JOINT_NAMES: list[str] = G1_SDK2_MOTOR_JOINT_NAMES
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 @dataclass
@@ -20,14 +31,20 @@ class RobotState:
     t_wall_s: float = 0.0
 
     # Base signals (body frame unless otherwise noted)
-    base_lin_vel: NDArray[np.floating] = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-    base_ang_vel: NDArray[np.floating] = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    base_lin_vel: NDArray[np.floating] = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32)
+    )
+    base_ang_vel: NDArray[np.floating] = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32)
+    )
 
     # IMU
     imu_quat_wxyz: NDArray[np.floating] = field(
         default_factory=lambda: np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
     )
-    projected_gravity: NDArray[np.floating] = field(default_factory=lambda: np.array([0.0, 0.0, -1.0], dtype=np.float32))
+    projected_gravity: NDArray[np.floating] = field(
+        default_factory=lambda: np.array([0.0, 0.0, -1.0], dtype=np.float32)
+    )
 
     # Joint state (policy order)
     q: NDArray[np.floating] = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
@@ -48,7 +65,9 @@ class CommandContext:
 
     # End-effector targets (world or base frame, adapter-defined). Stored as xyz + yaw.
     ee_left_xyz: NDArray[np.floating] = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-    ee_right_xyz: NDArray[np.floating] = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    ee_right_xyz: NDArray[np.floating] = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32)
+    )
     ee_yaw_deg: float = 0.0
 
     # Gains scaling (optional)
@@ -67,5 +86,3 @@ class JointTargets:
     kp: NDArray[np.floating] | None = None
     kd: NDArray[np.floating] | None = None
     tau_ff: NDArray[np.floating] | None = None
-
-
