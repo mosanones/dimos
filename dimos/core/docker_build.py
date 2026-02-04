@@ -17,12 +17,17 @@ Docker image building and Dockerfile conversion utilities.
 Converts any Dockerfile into a DimOS module container by appending a footer
 that installs DimOS and creates the module entrypoint.
 """
+
 from __future__ import annotations
+
 import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING
+
 from dimos.utils.logging_config import setup_logger
+
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from dimos.core.docker_runner import DockerModuleConfig
 
 logger = setup_logger()
@@ -47,23 +52,28 @@ RUN bash /tmp/module-install.sh /dimos/source && rm /tmp/module-install.sh
 ENTRYPOINT ["/dimos/entrypoint.sh"]
 """
 
+
 def _run(cmd: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     """Run a command and return the result."""
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+
 
 def _run_streaming(cmd: list[str]) -> int:
     """Run command and stream output to terminal. Returns exit code."""
     result = subprocess.run(cmd, text=True)
     return result.returncode
 
+
 def _docker_bin(cfg: DockerModuleConfig) -> str:
     """Get docker binary path."""
     return cfg.docker_bin or "docker"
+
 
 def _image_exists(docker_bin: str, image_name: str) -> bool:
     """Check if a Docker image exists locally."""
     r = _run([docker_bin, "image", "inspect", image_name], timeout=DOCKER_CMD_TIMEOUT)
     return r.returncode == 0
+
 
 def _convert_dockerfile(dockerfile: Path) -> Path:
     """Append DimOS footer to Dockerfile. Returns path to converted file."""
@@ -78,6 +88,7 @@ def _convert_dockerfile(dockerfile: Path) -> Path:
     converted = dockerfile.parent / f".{dockerfile.name}.dimos"
     converted.write_text(content.rstrip() + "\n" + DIMOS_FOOTER.lstrip("\n"))
     return converted
+
 
 def build_image(cfg: DockerModuleConfig) -> None:
     """Build Docker image using footer mode conversion."""
@@ -96,9 +107,11 @@ def build_image(cfg: DockerModuleConfig) -> None:
     if exit_code != 0:
         raise RuntimeError(f"Docker build failed with exit code {exit_code}")
 
+
 def image_exists(cfg: DockerModuleConfig) -> bool:
     """Check if the configured Docker image exists locally."""
     return _image_exists(_docker_bin(cfg), cfg.docker_image)
+
 
 __all__ = [
     "DIMOS_FOOTER",

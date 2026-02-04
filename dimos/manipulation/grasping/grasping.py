@@ -11,19 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Grasping skill module 
+"""Grasping skill module
 
 Provides @skill interface for agents and orchestrates the grasp generation pipeline:
 perception (get pointcloud) to graspgen (generate grasps in Docker) to output grasps
 """
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from dimos.core.skill_module import SkillModule
-from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseArray
-from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.protocol.skill.skill import rpc, skill
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import quaternion_to_euler
+
+if TYPE_CHECKING:
+    from dimos.core.stream import Out
+    from dimos.msgs.geometry_msgs import PoseArray
+    from dimos.msgs.sensor_msgs import PointCloud2
 
 logger = setup_logger()
 
@@ -117,9 +123,7 @@ class GraspingModule(SkillModule):
             logger.error(f"Failed to get object pointcloud: {e}")
             return None
 
-    def _get_scene_pointcloud(
-        self, exclude_object_id: str | None = None
-    ) -> PointCloud2 | None:
+    def _get_scene_pointcloud(self, exclude_object_id: str | None = None) -> PointCloud2 | None:
         """Fetch scene pointcloud from perception for collision filtering."""
         try:
             get_scene = self.get_rpc_calls(
@@ -140,6 +144,7 @@ class GraspingModule(SkillModule):
             f"Best grasp: pos=({pos.x:.4f}, {pos.y:.4f}, {pos.z:.4f}), "
             f"rpy=({rpy.x:.1f}, {rpy.y:.1f}, {rpy.z:.1f}) degrees"
         )
+
 
 grasping_module = GraspingModule.blueprint
 __all__ = ["GraspingModule", "grasping_module"]

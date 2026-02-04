@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from pathlib import Path
+
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
 from dimos.core.blueprints import autoconnect
@@ -27,17 +28,21 @@ camera_module = realsense_camera(enable_pointcloud=False)
 
 demo_grasping = autoconnect(
     camera_module,
-    object_scene_registration_module(target_frame="camera_color_optical_frame", prompt_mode=YoloePromptMode.PROMPT),
-    grasping_module(), 
+    object_scene_registration_module(
+        target_frame="camera_color_optical_frame", prompt_mode=YoloePromptMode.PROMPT
+    ),
+    grasping_module(),
     graspgen(
         docker_file_path=Path(__file__).parent / "docker_context" / "Dockerfile",
         docker_build_context=Path(__file__).parent.parent.parent.parent,  # repo root
-        gripper_type="robotiq_2f_140", # out of the bosx ships "robotiq_2f_140", "franka_panda", "single_suction_cup_30mm
+        gripper_type="robotiq_2f_140",  # out of the bosx ships "robotiq_2f_140", "franka_panda", "single_suction_cup_30mm
         num_grasps=400,
         topk_num_grasps=100,
         filter_collisions=False,
-        save_visualization_data=False, # to just see the visualization simply run ``grasping/visualize_grasps.py`` as a standalone script
-        docker_volumes=[("/tmp", "/tmp", "rw")], #Grasp visualization debug standalone: python -m dimos.manipulation.grasping.visualize_grasps
+        save_visualization_data=False,  # to just see the visualization simply run ``grasping/visualize_grasps.py`` as a standalone script
+        docker_volumes=[
+            ("/tmp", "/tmp", "rw")
+        ],  # Grasp visualization debug standalone: python -m dimos.manipulation.grasping.visualize_grasps
     ),
     foxglove_bridge(),
     human_input(),

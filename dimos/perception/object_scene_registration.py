@@ -18,7 +18,6 @@ from typing import Any
 import cv2
 import numpy as np
 from numpy.typing import NDArray
-
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.core import In, Out, rpc

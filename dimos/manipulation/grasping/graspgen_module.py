@@ -12,22 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from __future__ import annotations
+
+from dataclasses import dataclass
 import os
+from pathlib import Path
 import sys
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
+
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModuleConfig
 from dimos.core.module import Module
-from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import PoseArray
-from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
+
+if TYPE_CHECKING:
+    from dimos.core.stream import Out
+    from dimos.msgs.sensor_msgs import PointCloud2
 
 logger = setup_logger()
 
@@ -47,7 +52,9 @@ class GraspGenConfig(DockerModuleConfig):
     docker_shm_size: str = "4g"
 
     # GraspGen settings
-    gripper_type: str = "robotiq_2f_140" # use any from robotiq_2f_140", "franka_panda", "single_suction_cup_30mm"
+    gripper_type: str = (
+        "robotiq_2f_140"  # use any from robotiq_2f_140", "franka_panda", "single_suction_cup_30mm"
+    )
     num_grasps: int = 400
     topk_num_grasps: int = 100
     grasp_threshold: float = -1.0
@@ -57,7 +64,7 @@ class GraspGenConfig(DockerModuleConfig):
 
 
 class GraspGenModule(Module[GraspGenConfig]):
-    """Grasp generation module running in Docker. """
+    """Grasp generation module running in Docker."""
 
     default_config = GraspGenConfig
     grasps: Out[PoseArray]
@@ -120,13 +127,18 @@ class GraspGenModule(Module[GraspGenConfig]):
             # Setup GraspGen path and environment (must be set by Dockerfile)
             graspgen_path = os.environ.get("GRASPGEN_PATH")
             if graspgen_path is None:
-                raise RuntimeError("GRASPGEN_PATH environment variable not set. Ensure Dockerfile sets ENV GRASPGEN_PATH.")
+                raise RuntimeError(
+                    "GRASPGEN_PATH environment variable not set. Ensure Dockerfile sets ENV GRASPGEN_PATH."
+                )
             if graspgen_path not in sys.path:
                 sys.path.insert(0, graspgen_path)
             os.environ["PYOPENGL_PLATFORM"] = "egl"
 
             # Load model and gripper (Docker-only imports)
-            from grasp_gen.grasp_server import GraspGenSampler, load_grasp_cfg  # type: ignore[import-not-found]
+            from grasp_gen.grasp_server import (  # type: ignore[import-not-found]
+                GraspGenSampler,
+                load_grasp_cfg,
+            )
             from grasp_gen.robot import get_gripper_info  # type: ignore[import-not-found]
 
             grasp_cfg = load_grasp_cfg(self._get_gripper_config_path())
@@ -159,10 +171,13 @@ class GraspGenModule(Module[GraspGenConfig]):
         if self._sampler is None:
             return np.array([]), np.array([])
 
+        from grasp_gen.grasp_server import GraspGenSampler  # type: ignore[import-not-found]
+        from grasp_gen.utils.point_cloud_utils import (
+            filter_colliding_grasps,
+            point_cloud_outlier_removal,
+        )  # type: ignore[import-not-found]
         import torch  # type: ignore[import-not-found]
         import trimesh.transformations as tra  # type: ignore[import-not-found]
-        from grasp_gen.grasp_server import GraspGenSampler  # type: ignore[import-not-found]
-        from grasp_gen.utils.point_cloud_utils import filter_colliding_grasps, point_cloud_outlier_removal  # type: ignore[import-not-found]
 
         pc_torch = torch.from_numpy(object_pc)
 
@@ -218,13 +233,19 @@ class GraspGenModule(Module[GraspGenConfig]):
             raise ValueError("Point cloud contains NaN/Inf")
         return points  # type: ignore[no-any-return]
 
-    def _grasps_to_pose_array(self, grasps: np.ndarray[Any, Any], scores: np.ndarray[Any, Any], frame_id: str) -> PoseArray:
+    def _grasps_to_pose_array(
+        self, grasps: np.ndarray[Any, Any], scores: np.ndarray[Any, Any], frame_id: str
+    ) -> PoseArray:
         sorted_indices = np.argsort(scores)[::-1]
         poses = [matrix_to_pose(grasps[idx]) for idx in sorted_indices]
         return PoseArray(header=Header(frame_id), poses=poses)
 
     def _save_visualization_data(
-        self, points: np.ndarray[Any, Any], grasps: np.ndarray[Any, Any], scores: np.ndarray[Any, Any], frame_id: str
+        self,
+        points: np.ndarray[Any, Any],
+        grasps: np.ndarray[Any, Any],
+        scores: np.ndarray[Any, Any],
+        frame_id: str,
     ) -> None:
         import json
 
@@ -244,11 +265,15 @@ class GraspGenModule(Module[GraspGenConfig]):
             logger.warning(f"Failed to save visualization: {e}")
 
 
-def graspgen(docker_file_path: Path | str, docker_build_context: Path | str | None = None, **kwargs: Any) -> Any:
+def graspgen(
+    docker_file_path: Path | str, docker_build_context: Path | str | None = None, **kwargs: Any
+) -> Any:
     """Create a GraspGen module blueprint. All kwargs passed through to config."""
     dockerfile = Path(docker_file_path)
     build_context = Path(docker_build_context) if docker_build_context else dockerfile.parent
-    return GraspGenModule.blueprint(docker_file=dockerfile, docker_build_context=build_context, **kwargs)
+    return GraspGenModule.blueprint(
+        docker_file=dockerfile, docker_build_context=build_context, **kwargs
+    )
 
 
-__all__ = ["GraspGenModule", "GraspGenConfig", "graspgen"]
+__all__ = ["GraspGenConfig", "GraspGenModule", "graspgen"]

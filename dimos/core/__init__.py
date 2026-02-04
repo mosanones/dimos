@@ -192,7 +192,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             except Exception:
                 pass
         dask_client._docker_modules.clear()  # type: ignore[attr-defined]
-        
+
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:

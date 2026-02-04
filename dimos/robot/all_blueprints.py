@@ -77,6 +77,7 @@ all_modules = {
     "go2_connection": "dimos.robot.unitree.connection.go2",
     "google_maps_skill": "dimos.agents.skills.google_maps_skill_container",
     "gps_nav_skill": "dimos.agents.skills.gps_nav_skill",
+    "grasping_module": "dimos.manipulation.grasping.grasping",
     "human_input": "dimos.agents.cli.human",
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",

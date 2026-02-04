@@ -14,9 +14,11 @@
 """Grasp visualization debug tool: python -m dimos.manipulation.grasping.visualize_grasps"""
 
 from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any
+
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
@@ -25,6 +27,7 @@ FINGER_LENGTH = 0.052
 PALM_DEPTH = 0.04
 MAX_GRASPS = 100
 VISUALIZATION_FILE = "/tmp/grasp_visualization.json"
+
 
 def create_gripper_geometry(transform: np.ndarray[Any, Any], color: list[float]) -> list[Any]:
     w = GRIPPER_WIDTH / 2.0
@@ -47,6 +50,7 @@ def create_gripper_geometry(transform: np.ndarray[Any, Any], color: list[float])
 
     return [line_set]
 
+
 def visualize_grasps(point_cloud: np.ndarray[Any, Any], grasps: list[np.ndarray[Any, Any]]) -> None:
     geometries = []
 
@@ -65,6 +69,7 @@ def visualize_grasps(point_cloud: np.ndarray[Any, Any], grasps: list[np.ndarray[
 
     o3d.visualization.draw_geometries(geometries, window_name="GraspGen", width=1280, height=720)
 
+
 def main() -> int:
     filepath = Path(VISUALIZATION_FILE)
     if not filepath.exists():
@@ -79,6 +84,7 @@ def main() -> int:
 
     visualize_grasps(point_cloud, grasps)
     return 0
+
 
 if __name__ == "__main__":
     exit(main())

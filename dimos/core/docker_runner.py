@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import suppress
+from dataclasses import dataclass, field
 import importlib
 import json
 import os
@@ -21,10 +23,8 @@ import signal
 import subprocess
 import threading
 import time
-from contextlib import suppress
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
 from dimos.core.docker_build import build_image, image_exists
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall
@@ -32,14 +32,18 @@ from dimos.dashboard.rerun_init import RERUN_GRPC_PORT, RERUN_WEB_PORT
 from dimos.protocol.rpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
 logger = setup_logger()
 
 DOCKER_RUN_TIMEOUT = 120  #     Timeout for `docker run` command execution
-DOCKER_CMD_TIMEOUT = 20 #       Timeout for quick Docker commands (inspect, rm, logs)
-DOCKER_STATUS_TIMEOUT = 10 #    Timeout for container status checks
-DOCKER_STOP_TIMEOUT = 30 #      Timeout for `docker stop` command (graceful shutdown)
-RPC_READY_TIMEOUT = 3.0 #       Timeout for RPC readiness probe during container startup
-LOG_TAIL_LINES = 200 #          Number of log lines to include in error messages
+DOCKER_CMD_TIMEOUT = 20  #       Timeout for quick Docker commands (inspect, rm, logs)
+DOCKER_STATUS_TIMEOUT = 10  #    Timeout for container status checks
+DOCKER_STOP_TIMEOUT = 30  #      Timeout for `docker stop` command (graceful shutdown)
+RPC_READY_TIMEOUT = 3.0  #       Timeout for RPC readiness probe during container startup
+LOG_TAIL_LINES = 200  #          Number of log lines to include in error messages
 
 
 @dataclass(kw_only=True)
@@ -50,6 +54,7 @@ class DockerModuleConfig(ModuleConfig):
     For advanced Docker options not listed here, use docker_extra_args.
     Example: docker_extra_args=["--cap-add=SYS_ADMIN", "--read-only"]
     """
+
     # Build / image
     docker_image: str
     docker_file: Path | None = None  # Required on host for building, not needed in container
@@ -63,7 +68,9 @@ class DockerModuleConfig(ModuleConfig):
     # Networking (host mode recommended for LCM multicast)
     docker_network_mode: str = "host"
     docker_network: str | None = None
-    docker_ports: list[tuple[int, int, str]] = field(default_factory=list)  # (host, container, proto)
+    docker_ports: list[tuple[int, int, str]] = field(
+        default_factory=list
+    )  # (host, container, proto)
 
     # Runtime resources
     docker_gpus: str | None = "all"
@@ -73,7 +80,9 @@ class DockerModuleConfig(ModuleConfig):
     # Env + volumes + devices
     docker_env_files: list[str] = field(default_factory=list)
     docker_env: dict[str, str] = field(default_factory=dict)
-    docker_volumes: list[tuple[str, str, str]] = field(default_factory=list)  # (host, container, mode)
+    docker_volumes: list[tuple[str, str, str]] = field(
+        default_factory=list
+    )  # (host, container, mode)
     docker_devices: list[str] = field(default_factory=list)  # --device args as strings
 
     # Security
@@ -92,33 +101,44 @@ class DockerModuleConfig(ModuleConfig):
     # Advanced
     docker_bin: str = "docker"
 
+
 def is_docker_module(module_class: type) -> bool:
     """Check if a module class should run in Docker based on its default_config."""
     default_config = getattr(module_class, "default_config", None)
     return default_config is not None and issubclass(default_config, DockerModuleConfig)
 
+
 # Docker helpers
+
 
 def _run(cmd: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     logger.debug(f"exec: {' '.join(cmd)}")
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
 
+
 def _docker_bin(cfg: DockerModuleConfig) -> str:
     """Get docker binary path, defaulting to 'docker' if empty/None."""
     return cfg.docker_bin or "docker"
 
+
 def _remove_container(cfg: DockerModuleConfig, name: str) -> None:
     _run([_docker_bin(cfg), "rm", "-f", name], timeout=DOCKER_CMD_TIMEOUT)
 
+
 def _is_container_running(cfg: DockerModuleConfig, name: str) -> bool:
-    r = _run([_docker_bin(cfg), "inspect", "-f", "{{.State.Running}}", name], timeout=DOCKER_STATUS_TIMEOUT)
+    r = _run(
+        [_docker_bin(cfg), "inspect", "-f", "{{.State.Running}}", name],
+        timeout=DOCKER_STATUS_TIMEOUT,
+    )
     return r.returncode == 0 and r.stdout.strip() == "true"
+
 
 def _tail_logs(cfg: DockerModuleConfig, name: str, n: int = LOG_TAIL_LINES) -> str:
     r = _run([_docker_bin(cfg), "logs", "--tail", str(n), name], timeout=DOCKER_CMD_TIMEOUT)
     out = (r.stdout or "").rstrip()
     err = (r.stderr or "").rstrip()
     return out + ("\n" + err if err else "")
+
 
 def _extract_module_config(cfg: DockerModuleConfig) -> dict[str, Any]:
     """Extract JSON-serializable config fields for the container (excludes docker_* fields)."""
@@ -133,7 +153,9 @@ def _extract_module_config(cfg: DockerModuleConfig) -> dict[str, Any]:
             logger.debug(f"Config field '{k}' not JSON-serializable, skipping")
     return out
 
+
 # Host-side Docker-backed Module handle
+
 
 class DockerModule:
     """
@@ -159,7 +181,10 @@ class DockerModule:
         self._kwargs = kwargs
         self._running = False
         self.remote_name = module_class.__name__
-        self._container_name = config.docker_container_name or f"dimos_{module_class.__name__.lower()}_{os.getpid()}_{int(time.time())}"
+        self._container_name = (
+            config.docker_container_name
+            or f"dimos_{module_class.__name__.lower()}_{os.getpid()}_{int(time.time())}"
+        )
 
         # RPC setup
         self.rpc = LCMRPC()
@@ -189,7 +214,7 @@ class DockerModule:
     def start(self) -> None:
         if self._running:
             return
-            
+
         cfg = self._config
 
         # Prevent accidental kill of running container with same name
@@ -204,7 +229,9 @@ class DockerModule:
         logger.info(f"Starting docker container: {self._container_name}")
         r = _run(cmd, timeout=DOCKER_RUN_TIMEOUT)
         if r.returncode != 0:
-            raise RuntimeError(f"Failed to start container.\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}")
+            raise RuntimeError(
+                f"Failed to start container.\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
+            )
 
         self.rpc.start()
         self._running = True
@@ -298,13 +325,17 @@ class DockerModule:
         if cfg.docker_rm:
             cmd.append("--rm")
             if cfg.docker_restart_policy and cfg.docker_restart_policy != "no":
-                logger.warning("--rm with docker_restart_policy is unusual; consider docker_restart_policy='no'.")
+                logger.warning(
+                    "--rm with docker_restart_policy is unusual; consider docker_restart_policy='no'."
+                )
         cmd.extend(["--name", self._container_name])
 
     def _add_network_args(self, cmd: list[str], cfg: DockerModuleConfig) -> None:
         """Add --network args."""
         if cfg.docker_network and cfg.docker_network_mode != "host":
-            logger.warning("Both 'docker_network' and 'docker_network_mode' set; using 'docker_network' and ignoring 'docker_network_mode'.")
+            logger.warning(
+                "Both 'docker_network' and 'docker_network_mode' set; using 'docker_network' and ignoring 'docker_network_mode'."
+            )
         if cfg.docker_network:
             cmd.extend(["--network", cfg.docker_network])
         else:
@@ -389,7 +420,9 @@ class DockerModule:
                 raise RuntimeError(f"Container died during startup:\n{logs}")
 
             try:
-                self.rpc.call_sync(f"{self.remote_name}/start", ([], {}), rpc_timeout=RPC_READY_TIMEOUT)
+                self.rpc.call_sync(
+                    f"{self.remote_name}/start", ([], {}), rpc_timeout=RPC_READY_TIMEOUT
+                )
                 elapsed = time.time() - start_time
                 logger.info(f"{self.remote_name} ready ({elapsed:.1f}s)")
                 return
@@ -402,7 +435,9 @@ class DockerModule:
             f"Timeout waiting for {self.remote_name} after {cfg.docker_startup_timeout:.1f}s:\n{logs}"
         )
 
+
 # Container-side runner
+
 
 class StandaloneModuleRunner:
     """Runs a module inside Docker container. Blocks until SIGTERM/SIGINT."""
@@ -438,12 +473,14 @@ class StandaloneModuleRunner:
     def wait(self) -> None:
         self._shutdown.wait()
 
+
 def _install_signal_handlers(runner: StandaloneModuleRunner) -> None:
     def shutdown(_sig: int, _frame: Any) -> None:
         runner.stop()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+
 
 def _cli_run(payload_json: str) -> None:
     payload = json.loads(payload_json)
@@ -455,6 +492,7 @@ def _cli_run(payload_json: str) -> None:
     _install_signal_handlers(runner)
     runner.start()
     runner.wait()
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="dimos.core.docker_runner")
