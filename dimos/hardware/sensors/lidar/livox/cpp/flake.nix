@@ -41,6 +41,8 @@
           '';
         };
 
+        livox-common = ../../common;
+
         mid360_native = pkgs.stdenv.mkDerivation {
           pname = "mid360_native";
           version = "0.1.0";
@@ -53,6 +55,7 @@
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
+            "-DLIVOX_COMMON_DIR=${livox-common}"
           ];
         };
       in {

@@ -32,10 +32,16 @@ set(LIVOX_SDK_INCLUDE_DIR ${LIVOX_SDK_PREFIX}/include)
 
 add_executable(mid360_native main.cpp)
 
+# Shared Livox common headers (livox_sdk_config.hpp etc.)
+if(NOT LIVOX_COMMON_DIR)
+  set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+endif()
+
 target_include_directories(mid360_native PRIVATE
   ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
   ${LCM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${LIVOX_COMMON_DIR}
   ${LIVOX_SDK_INCLUDE_DIR}
 )
 

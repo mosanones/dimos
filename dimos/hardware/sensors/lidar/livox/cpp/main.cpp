@@ -7,8 +7,6 @@
 // Usage: ./mid360_native --pointcloud <topic> --imu <topic> [--host_ip <ip>] [--lidar_ip <ip>] ...
 
 #include <lcm/lcm-cpp.hpp>
-#include <livox_lidar_api.h>
-#include <livox_lidar_def.h>
 
 #include <atomic>
 #include <chrono>
@@ -21,6 +19,8 @@
 #include <thread>
 #include <vector>
 
+#include "livox_sdk_config.hpp"
+
 #include "dimos_native_module.hpp"
 
 #include "geometry_msgs/Quaternion.hpp"
@@ -31,13 +31,10 @@
 #include "std_msgs/Header.hpp"
 #include "std_msgs/Time.hpp"
 
-// Gravity constant for converting accelerometer data from g to m/s^2
-static constexpr double GRAVITY_MS2 = 9.80665;
-
-// Livox data_type values (not provided as named constants in SDK2 header)
-static constexpr uint8_t DATA_TYPE_IMU = 0x00;
-static constexpr uint8_t DATA_TYPE_CARTESIAN_HIGH = 0x01;
-static constexpr uint8_t DATA_TYPE_CARTESIAN_LOW = 0x02;
+using livox_common::GRAVITY_MS2;
+using livox_common::DATA_TYPE_IMU;
+using livox_common::DATA_TYPE_CARTESIAN_HIGH;
+using livox_common::DATA_TYPE_CARTESIAN_LOW;
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -240,74 +237,6 @@ static void signal_handler(int /*sig*/) {
 }
 
 // ---------------------------------------------------------------------------
-// SDK config file generation
-// ---------------------------------------------------------------------------
-
-struct SdkPorts {
-    int cmd_data      = 56100;
-    int push_msg      = 56200;
-    int point_data    = 56300;
-    int imu_data      = 56400;
-    int log_data      = 56500;
-    int host_cmd_data   = 56101;
-    int host_push_msg   = 56201;
-    int host_point_data = 56301;
-    int host_imu_data   = 56401;
-    int host_log_data   = 56501;
-};
-
-static std::string write_sdk_config(const std::string& host_ip,
-                                    const std::string& lidar_ip,
-                                    const SdkPorts& ports) {
-    char tmpl[] = "/tmp/livox_mid360_XXXXXX";
-    int fd = mkstemp(tmpl);
-    if (fd < 0) {
-        perror("mkstemp");
-        return "";
-    }
-
-    // fdopen takes ownership of fd — fclose will close it
-    FILE* fp = fdopen(fd, "w");
-    if (!fp) {
-        perror("fdopen");
-        close(fd);
-        return "";
-    }
-
-    fprintf(fp,
-        "{\n"
-        "  \"MID360\": {\n"
-        "    \"lidar_net_info\": {\n"
-        "      \"cmd_data_port\": %d,\n"
-        "      \"push_msg_port\": %d,\n"
-        "      \"point_data_port\": %d,\n"
-        "      \"imu_data_port\": %d,\n"
-        "      \"log_data_port\": %d\n"
-        "    },\n"
-        "    \"host_net_info\": [\n"
-        "      {\n"
-        "        \"host_ip\": \"%s\",\n"
-        "        \"multicast_ip\": \"224.1.1.5\",\n"
-        "        \"cmd_data_port\": %d,\n"
-        "        \"push_msg_port\": %d,\n"
-        "        \"point_data_port\": %d,\n"
-        "        \"imu_data_port\": %d,\n"
-        "        \"log_data_port\": %d\n"
-        "      }\n"
-        "    ]\n"
-        "  }\n"
-        "}\n",
-        ports.cmd_data, ports.push_msg, ports.point_data,
-        ports.imu_data, ports.log_data,
-        host_ip.c_str(),
-        ports.host_cmd_data, ports.host_push_msg, ports.host_point_data,
-        ports.host_imu_data, ports.host_log_data);
-    fclose(fp);
-
-    return tmpl;
-}
-
-// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -331,7 +260,7 @@ int main(int argc, char** argv) {
     g_imu_frame_id = mod.arg("imu_frame_id", "imu_link");
 
     // SDK network ports (configurable for multi-sensor setups)
-    SdkPorts ports;
+    livox_common::SdkPorts ports;
     ports.cmd_data        = mod.arg_int("cmd_data_port", 56100);
     ports.push_msg        = mod.arg_int("push_msg_port", 56200);
     ports.point_data      = mod.arg_int("point_data_port", 56300);
@@ -361,17 +290,8 @@ int main(int argc, char** argv) {
     }
     g_lcm = &lcm;
 
-    // Write SDK config
-    std::string config_path = write_sdk_config(host_ip, lidar_ip, ports);
-    if (config_path.empty()) {
-        fprintf(stderr, "Error: failed to write SDK config\n");
-        return 1;
-    }
-
-    // Init Livox SDK
-    if (!LivoxLidarSdkInit(config_path.c_str(), host_ip.c_str())) {
-        fprintf(stderr, "Error: LivoxLidarSdkInit failed\n");
-        std::remove(config_path.c_str());
+    // Init Livox SDK (in-memory config, no temp files)
+    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports)) {
         return 1;
     }
 
@@ -386,7 +306,6 @@ int main(int argc, char** argv) {
     if (!LivoxLidarSdkStart()) {
         fprintf(stderr, "Error: LivoxLidarSdkStart failed\n");
         LivoxLidarSdkUninit();
-        std::remove(config_path.c_str());
         return 1;
     }
 
@@ -429,7 +348,6 @@ int main(int argc, char** argv) {
     // Cleanup
     printf("[mid360] Shutting down...\n");
     LivoxLidarSdkUninit();
-    std::remove(config_path.c_str());
     g_lcm = nullptr;
 
     printf("[mid360] Done.\n");

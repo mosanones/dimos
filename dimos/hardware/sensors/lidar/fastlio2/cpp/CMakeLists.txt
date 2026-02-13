@@ -75,6 +75,11 @@ add_executable(fastlio2_native
   ${FASTLIO_DIR}/include/ikd-Tree/ikd_Tree.cpp
 )
 
+# Shared Livox common headers (livox_sdk_config.hpp etc.)
+if(NOT LIVOX_COMMON_DIR)
+  set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+endif()
+
 target_include_directories(fastlio2_native PRIVATE
   ${FASTLIO_DIR}/include
   ${FASTLIO_DIR}/src
@@ -83,6 +88,7 @@ target_include_directories(fastlio2_native PRIVATE
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${LIVOX_COMMON_DIR}
   ${LIVOX_SDK_INCLUDE_DIR}
 )
 

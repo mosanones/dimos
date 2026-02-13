@@ -23,6 +23,8 @@
         pkgs = import nixpkgs { inherit system; };
         livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
 
+        livox-common = ../../common;
+
         fastlio2_native = pkgs.stdenv.mkDerivation {
           pname = "fastlio2_native";
           version = "0.1.0";
@@ -45,6 +47,7 @@
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFASTLIO_DIR=${fast-lio}"
+            "-DLIVOX_COMMON_DIR=${livox-common}"
           ];
         };
       in {
