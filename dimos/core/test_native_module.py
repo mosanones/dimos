@@ -20,9 +20,7 @@ The echo script writes received CLI args to a temp file for assertions.
 
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 
 import pytest
@@ -41,16 +39,9 @@ _ECHO = str(Path(__file__).parent / "tests" / "native_echo.py")
 
 
 @pytest.fixture
-def args_file():
-    """Temp file where native_echo.py writes the CLI args it received."""
-    fd, path = tempfile.mkstemp(suffix=".json", prefix="native_echo_")
-    os.close(fd)
-    os.unlink(path)
-    try:
-        yield path
-    finally:
-        if os.path.exists(path):
-            os.unlink(path)
+def args_file(tmp_path: Path) -> str:
+    """Temp file path where native_echo.py writes the CLI args it received."""
+    return str(tmp_path / "native_echo_args.json")
 
 
 def read_json_file(path: str) -> dict[str, str]:
@@ -70,7 +61,7 @@ def read_json_file(path: str) -> dict[str, str]:
 @dataclass(kw_only=True)
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
-    log_format: LogFormat = LogFormat.JSON
+    log_format: LogFormat = LogFormat.TEXT
     some_param: float = 1.5
 
 

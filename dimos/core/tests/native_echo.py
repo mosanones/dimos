@@ -28,16 +28,17 @@ import signal
 import sys
 import time
 
+print("this mesasage goes to stdout")
+print("this message goes to stderr", file=sys.stderr)
+
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 output_path = os.environ.get("NATIVE_ECHO_OUTPUT")
 if output_path:
     with open(output_path, "w") as f:
         json.dump(sys.argv[1:], f)
-else:
-    json.dump({"event": "echo_args", "args": sys.argv[1:]}, sys.stdout)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+
+print("my args:", json.dumps(sys.argv[1:]))
 
 die_after = os.environ.get("NATIVE_ECHO_DIE_AFTER")
 if die_after:
