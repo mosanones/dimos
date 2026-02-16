@@ -40,8 +40,10 @@ struct Voxel {
 
 class VoxelMap {
 public:
-    explicit VoxelMap(float voxel_size, float max_range = 100.0f)
-        : voxel_size_(voxel_size), max_range_(max_range) {
+    explicit VoxelMap(float voxel_size, float max_range = 100.0f,
+                     float hull_margin = -1.0f)
+        : voxel_size_(voxel_size), max_range_(max_range),
+          hull_margin_(hull_margin >= 0 ? hull_margin : voxel_size) {
         map_.reserve(500000);
     }
 
@@ -153,14 +155,16 @@ public:
             return;
         }
 
-        // Delete voxels whose centroids are inside the hull.
-        // Inside = dot(normal, centroid) <= d for ALL facets.
+        // Delete voxels whose centroids are strictly inside the hull.
+        // Shrink inward by one voxel_size_ so boundary voxels (walls,
+        // surfaces the LiDAR hit) are preserved — only free space is cleared.
+        float margin = hull_margin_;
         size_t cleared = 0;
         for (auto it = map_.begin(); it != map_.end();) {
             const auto& v = it->second;
             bool inside = true;
             for (const auto& pl : planes) {
-                if (pl.nx * v.x + pl.ny * v.y + pl.nz * v.z > pl.d) {
+                if (pl.nx * v.x + pl.ny * v.y + pl.nz * v.z > pl.d - margin) {
                     inside = false;
                     break;
                 }
@@ -219,6 +223,7 @@ private:
     std::unordered_map<VoxelKey, Voxel, VoxelKeyHash> map_;
     float voxel_size_;
     float max_range_;
+    float hull_margin_;
 };
 
 #endif

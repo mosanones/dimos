@@ -324,7 +324,12 @@ int main(int argc, char** argv) {
     filter_cfg.sor_stddev = mod.arg_float("sor_stddev", 1.0f);
     float map_voxel_size = mod.arg_float("map_voxel_size", 0.1f);
     float map_max_range = mod.arg_float("map_max_range", 100.0f);
+    float map_hull_margin = mod.arg_float("map_hull_margin", -1.0f);
     float map_freq = mod.arg_float("map_freq", 0.0f);
+    CloudFilterConfig map_filter_cfg;
+    map_filter_cfg.voxel_size = map_voxel_size;
+    map_filter_cfg.sor_mean_k = mod.arg_int("map_sor_mean_k", 50);
+    map_filter_cfg.sor_stddev = mod.arg_float("map_sor_stddev", 0.5f);
 
     // SDK network ports (defaults from SdkPorts struct in livox_sdk_config.hpp)
     livox_common::SdkPorts ports;
@@ -418,7 +423,7 @@ int main(int argc, char** argv) {
     double map_insert_time_sum = 0.0;
     int map_insert_count = 0;
     if (!g_map_topic.empty() && map_freq > 0.0f) {
-        global_map = std::make_unique<VoxelMap>(map_voxel_size, map_max_range);
+        global_map = std::make_unique<VoxelMap>(map_voxel_size, map_max_range, map_hull_margin);
         map_interval = std::chrono::microseconds(
             static_cast<int64_t>(1e6 / map_freq));
     }
@@ -486,17 +491,19 @@ int main(int argc, char** argv) {
                     map_accum_frames++;
 
                     if (now - last_map_cycle >= map_interval) {
+                        auto map_cloud_filtered = filter_cloud<PointType>(map_accum_cloud, map_filter_cfg);
                         auto t0 = std::chrono::high_resolution_clock::now();
-                        global_map->hull_clear_and_insert<PointType>(map_accum_cloud);
+                        global_map->hull_clear_and_insert<PointType>(map_cloud_filtered);
                         auto t1 = std::chrono::high_resolution_clock::now();
 
                         double insert_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
                         map_insert_time_sum += insert_ms;
                         map_insert_count++;
 
-                        printf("[fastlio2] map insert: %d frames, %zu pts, %.1f ms (avg %.1f ms), map %zu voxels\n",
+                        printf("[fastlio2] map insert: %d frames, %zu→%zu pts, %.1f ms (avg %.1f ms), map %zu voxels\n",
                                map_accum_frames,
                                map_accum_cloud->size(),
+                               map_cloud_filtered->size(),
                                insert_ms,
                                map_insert_time_sum / map_insert_count,
                                global_map->size());

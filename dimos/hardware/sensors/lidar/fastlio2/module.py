@@ -89,6 +89,7 @@ class FastLio2Config(NativeModuleConfig):
     map_freq: float = 0.0
     map_voxel_size: float = 0.1
     map_max_range: float = 100.0
+    map_hull_margin: float = 0.1  # hull inset margin; -1 = use map_voxel_size
 
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
