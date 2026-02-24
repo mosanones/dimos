@@ -16,9 +16,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import cache
+import logging
 import os
 import subprocess
 from typing import Any
+
+import typer
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------- sudo helpers -----------------------------
 
@@ -41,19 +46,19 @@ def _read_sysctl_int(name: str) -> int | None:
     try:
         result = subprocess.run(["sysctl", name], capture_output=True, text=True)
         if result.returncode != 0:
-            print(
-                f"[sysctl] ERROR: `sysctl {name}` rc={result.returncode} stderr={result.stderr!r}"
+            logger.error(
+                "[sysctl] `sysctl %s` rc=%d stderr=%r", name, result.returncode, result.stderr
             )
             return None
 
         text = result.stdout.strip().replace(":", "=")
         if "=" not in text:
-            print(f"[sysctl] ERROR: unexpected output for {name}: {text!r}")
+            logger.error("[sysctl] unexpected output for %s: %r", name, text)
             return None
 
         return int(text.split("=", 1)[1].strip())
     except Exception as error:
-        print(f"[sysctl] ERROR: reading {name}: {error}")
+        logger.error("[sysctl] reading %s: %s", name, error)
         return None
 
 
@@ -91,7 +96,7 @@ class SystemConfigurator(ABC):
 
 def configure_system(checks: list[SystemConfigurator], check_only: bool = False) -> None:
     if os.environ.get("CI"):
-        print("CI environment detected: skipping system configuration.")
+        logger.info("CI environment detected: skipping system configuration.")
         return
 
     # run checks
@@ -103,19 +108,13 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
     explanations: list[str] = [msg for check in failing if (msg := check.explanation()) is not None]
 
     if explanations:
-        print("System configuration changes are recommended/required:\n")
-        print("\n\n".join(explanations))
-        print()
+        logger.warning("System configuration changes are recommended/required:\n")
+        logger.warning("\n\n".join(explanations))
 
     if check_only:
         return
 
-    try:
-        answer = input("Apply these changes now? [y/N]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = ""
-
-    if answer not in ("y", "yes"):
+    if not typer.confirm("\nApply these changes now?"):
         if any(check.critical for check in failing):
             raise SystemExit(1)
         return
@@ -125,12 +124,12 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
             check.fix()
         except subprocess.CalledProcessError as error:
             if check.critical:
-                print(f"Critical fix failed rc={error.returncode}")
-                print(f"stdout: {error.stdout}")
-                print(f"stderr: {error.stderr}")
+                logger.error("Critical fix failed rc=%d", error.returncode)
+                logger.error("stdout: %s", error.stdout)
+                logger.error("stderr: %s", error.stderr)
                 raise
-            print(f"Optional improvement failed: rc={error.returncode}")
-            print(f"stdout: {error.stdout}")
-            print(f"stderr: {error.stderr}")
+            logger.warning("Optional improvement failed: rc=%d", error.returncode)
+            logger.warning("stdout: %s", error.stdout)
+            logger.warning("stderr: %s", error.stderr)
 
-    print("System configuration completed.")
+    logger.info("System configuration completed.")
