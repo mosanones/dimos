@@ -69,6 +69,12 @@ class TeleopIKTaskConfig:
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
         hand: "left" or "right" — which controller's primary button to listen to
+        gripper_joint: Optional joint name for the gripper (e.g. "arm_gripper").
+            When set, on_gripper_trigger() maps a 0-1 analog trigger to gripper
+            position and includes it in JointCommandOutput each tick alongside
+            the arm joints. Requires a ConnectedGripper registered under this name.
+        gripper_open_pos: Gripper position (meters) at trigger value 0.0 (no press).
+        gripper_closed_pos: Gripper position (meters) at trigger value 1.0 (full press).
     """
 
     joint_names: list[str]
@@ -76,8 +82,11 @@ class TeleopIKTaskConfig:
     ee_joint_id: int
     priority: int = 10
     timeout: float = 0.5
-    max_joint_delta_deg: float = 5.0  # ~500°/s at 100Hz
+    max_joint_delta_deg: float = 20.0  # loosened; tighten once IK null-space regularization is added
     hand: str = ""
+    gripper_joint: str | None = None
+    gripper_open_pos: float = 0.85
+    gripper_closed_pos: float = 0.0
 
 
 class TeleopIKTask(BaseControlTask):
@@ -148,6 +157,10 @@ class TeleopIKTask(BaseControlTask):
         self._initial_ee_pose: pinocchio.SE3 | None = None
         self._prev_primary: bool = False
 
+        # Gripper state — only active when config.gripper_joint is set.
+        # Starts at open position so the gripper doesn't unexpectedly close on engage.
+        self._gripper_target: float = config.gripper_open_pos
+
         logger.info(
             f"TeleopIKTask {name} initialized with model: {config.model_path}, "
             f"ee_joint_id={config.ee_joint_id}, joints={config.joint_names}"
@@ -160,8 +173,11 @@ class TeleopIKTask(BaseControlTask):
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
+        joints = self._joint_names
+        if self._config.gripper_joint:
+            joints = joints | frozenset([self._config.gripper_joint])
         return ResourceClaim(
-            joints=self._joint_names,
+            joints=joints,
             priority=self._config.priority,
             mode=ControlMode.SERVO_POSITION,
         )
@@ -245,9 +261,18 @@ class TeleopIKTask(BaseControlTask):
             )
             return None
 
+        joint_names = list(self._joint_names_list)
         positions = q_solution.flatten().tolist()
+
+        # Append gripper joint if configured — routed to ConnectedGripper by tick loop
+        if self._config.gripper_joint:
+            with self._lock:
+                gripper_pos = self._gripper_target
+            joint_names.append(self._config.gripper_joint)
+            positions.append(gripper_pos)
+
         return JointCommandOutput(
-            joint_names=self._joint_names_list,
+            joint_names=joint_names,
             positions=positions,
             mode=ControlMode.SERVO_POSITION,
         )
@@ -302,6 +327,19 @@ class TeleopIKTask(BaseControlTask):
                 self._target_pose = None
                 self._initial_ee_pose = None
         self._prev_primary = primary
+
+        # Gripper: decode analog trigger from bits 16-31 of Buttons and update target
+        if self._config.gripper_joint:
+            if hand == "left":
+                self.on_gripper_trigger(msg.left_trigger_analog, 0.0)
+            elif hand == "right":
+                self.on_gripper_trigger(msg.right_trigger_analog, 0.0)
+            else:
+                logger.warning(
+                    f"TeleopIKTask {self._name}: gripper_joint is set but hand is not "
+                    f"'left' or 'right' — cannot determine which trigger to use"
+                )
+
         return True
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
@@ -310,6 +348,32 @@ class TeleopIKTask(BaseControlTask):
             self._target_pose = pose  # Store raw, convert to SE3 in compute()
             self._last_update_time = t_now
             self._active = True
+
+        return True
+
+    def on_gripper_trigger(self, value: float, _t_now: float) -> bool:
+        """Map analog trigger (0-1) to gripper position.
+
+        Called each tick by the coordinator when a trigger stream is wired in.
+        Linearly interpolates: 0.0 → gripper_open_pos, 1.0 → gripper_closed_pos.
+
+        Args:
+            value: Trigger value in [0.0, 1.0] (0 = no press, 1 = full press)
+            t_now: Current time (unused — gripper holds position indefinitely)
+
+        Returns:
+            True if gripper_joint is configured, False otherwise
+        """
+        if not self._config.gripper_joint:
+            return False
+
+        clamped = max(0.0, min(1.0, value))
+        pos = self._config.gripper_open_pos + (
+            self._config.gripper_closed_pos - self._config.gripper_open_pos
+        ) * clamped
+
+        with self._lock:
+            self._gripper_target = pos
 
         return True
 
