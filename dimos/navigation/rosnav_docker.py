@@ -108,18 +108,27 @@ class ROSNavConfig(DockerModuleConfig):
             "ROS_DOMAIN_ID": "42",
             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
             "FASTRTPS_DEFAULT_PROFILES_FILE": "/ros2_ws/config/fastdds.xml",
-            "START_ROS_NAV": "true",
-            "START_UNITY_SIM": "false",
             # "ROBOT_CONFIG_PATH": "unitree/unitree_g1",
         }
     )
     docker_volumes: list = field(default_factory=lambda: [])
 
-    # --- Simulation settings ---
-    unity_simulation: bool = False
+    # --- Runtime mode settings ---
+    # mode controls which ROS launch file the entrypoint selects:
+    #   "simulation"  — system_simulation[_with_route_planner].launch.py (default)
+    #   "unity_sim"   — same launch file as simulation, but also starts the Unity exe
+    #                   (crashes at startup if the Unity binary is missing)
+    #   "hardware"    — system_real_robot[_with_route_planner].launch.py
+    #   "bagfile"     — system_bagfile[_with_route_planner].launch.py + use_sim_time
+    # Setting bagfile_path automatically forces mode to "bagfile".
+    mode: str = "simulation"
+    bagfile_path: str = ""  # container-side path to bag; plays with --clock
 
     def __post_init__(self) -> None:
-        self.docker_env["START_UNITY_SIM"] = "true" if self.unity_simulation else "false"
+        effective_mode = "bagfile" if self.bagfile_path else self.mode
+        self.docker_env["MODE"] = effective_mode
+        if self.bagfile_path:
+            self.docker_env["BAGFILE_PATH"] = self.bagfile_path
         self.docker_volumes += [
             # Mount live dimos source so the module is always up-to-date
             (str(Path(__file__).parent.parent.parent), "/workspace/dimos", "rw"),
