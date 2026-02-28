@@ -65,7 +65,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-
 logger = setup_logger()
 
 
