@@ -168,7 +168,9 @@ class Worker:
         """Collect resource stats for this worker's process."""
         modules = [actor._cls.__name__ for actor in self._modules.values()]
         if self._process is not None and self._process.is_alive():
-            pid: int = self._process.pid  # type: ignore[assignment]
+            pid = self._process.pid
+            if pid is None:
+                return WorkerStats(pid=0, alive=False, worker_id=self._worker_id, modules=modules)
             ps = collect_process_stats(pid)
             return WorkerStats(**asdict(ps), worker_id=self._worker_id, modules=modules)
         return WorkerStats(pid=0, alive=False, worker_id=self._worker_id, modules=modules)
