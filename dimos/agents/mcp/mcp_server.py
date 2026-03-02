@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -30,8 +31,6 @@ from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    import concurrent.futures
-
     from dimos.core.module import SkillInfo
 
 logger = setup_logger()
@@ -156,10 +155,8 @@ async def mcp_endpoint(request: Request) -> Response:
 
 
 class McpServer(Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self._uvicorn_server: uvicorn.Server | None = None
-        self._serve_future: concurrent.futures.Future[None] | None = None
+    _uvicorn_server: uvicorn.Server | None = None
+    _serve_future: concurrent.futures.Future[None] | None = None
 
     @rpc
     def start(self) -> None:

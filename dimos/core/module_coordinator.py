@@ -70,7 +70,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         if not self._client:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
-        module = self._client.deploy(module_class, global_config, **kwargs)
+        module = self._client.deploy(module_class, global_config, kwargs)
         self._deployed_modules[module_class] = module  # type: ignore[assignment]
         return module  # type: ignore[return-value]
 
