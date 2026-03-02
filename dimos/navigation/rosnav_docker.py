@@ -18,6 +18,7 @@ NavBot class for navigation-related functionality.
 Encapsulates ROS transport and topic remapping for Unitree robots.
 """
 
+import cv2
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
@@ -38,6 +39,7 @@ try:  # pragma: no cover - import-time environment dependent
     )
     from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
     from sensor_msgs.msg import (  # type: ignore[attr-defined]
+        CompressedImage as ROSCompressedImage,
         Joy as ROSJoy,
         PointCloud2 as ROSPointCloud2,
     )
@@ -57,6 +59,7 @@ except ModuleNotFoundError:
     ROSPoseStamped = _Stub  # type: ignore[assignment]
     ROSTwistStamped = _Stub  # type: ignore[assignment]
     ROSPath = _Stub  # type: ignore[assignment]
+    ROSCompressedImage = _Stub  # type: ignore[assignment]
     ROSJoy = _Stub  # type: ignore[assignment]
     ROSPointCloud2 = _Stub  # type: ignore[assignment]
     ROSBool = _Stub  # type: ignore[assignment]
@@ -70,7 +73,7 @@ from dimos.core.docker_runner import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import JpegLcmTransport, LCMTransport
 from dimos.utils.data import get_data
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -80,7 +83,7 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.nav_msgs import Path as NavPath
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs import Image, ImageFormat, PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationInterface, NavigationState
@@ -267,8 +270,10 @@ class ROSNav(
 
     goal_req: In[PoseStamped]
 
+    image: Out[Image]
     pointcloud: Out[PointCloud2]
     global_pointcloud: Out[PointCloud2]
+    overall_map: Out[PointCloud2]
     goal_active: Out[PoseStamped]
     path_active: Out[NavPath]
     cmd_vel: Out[Twist]
@@ -328,6 +333,14 @@ class ROSNav(
             ROSPointCloud2, "/terrain_map_ext", self._on_ros_global_map, 10
         )
 
+        self.overall_map_sub = self._node.create_subscription(
+            ROSPointCloud2, "/overall_map", self._on_ros_overall_map, 10
+        )
+
+        self.image_sub = self._node.create_subscription(
+            ROSCompressedImage, "/camera/image/compressed", self._on_ros_image, 10
+        )
+
         self.path_sub = self._node.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
         self.tf_sub = self._node.create_subscription(ROSTFMessage, "/tf", self._on_ros_tf, 10)
 
@@ -381,6 +394,12 @@ class ROSNav(
 
     def _on_ros_global_map(self, msg: ROSPointCloud2) -> None:
         self.global_pointcloud.publish(_pc2_from_ros(msg))
+
+    def _on_ros_overall_map(self, msg: ROSPointCloud2) -> None:
+        self.overall_map.publish(_pc2_from_ros(msg))
+
+    def _on_ros_image(self, msg: "ROSCompressedImage") -> None:
+        self.image.publish(_image_from_ros_compressed(msg))
 
     def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = _path_from_ros(msg)
@@ -626,8 +645,10 @@ def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
     nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined, type-abstract]
 
     # Existing ports on LCM transports
+    nav.image.transport = JpegLcmTransport("/camera", Image)
     nav.pointcloud.transport = LCMTransport("/lidar", PointCloud2)
     nav.global_pointcloud.transport = LCMTransport("/map", PointCloud2)
+    nav.overall_map.transport = LCMTransport("/overall_map", PointCloud2)
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_active.transport = LCMTransport("/goal_active", PoseStamped)
     nav.path_active.transport = LCMTransport("/path_active", NavPath)
@@ -635,6 +656,17 @@ def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
 
     nav.start()
     return nav
+
+
+def _image_from_ros_compressed(msg: "ROSCompressedImage") -> Image:
+    """Convert a ROS2 sensor_msgs/CompressedImage to a DimOS Image."""
+    ts = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
+    frame_id = msg.header.frame_id
+    arr = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+    bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if bgr is None:
+        return Image(frame_id=frame_id, ts=ts)
+    return Image(data=bgr, format=ImageFormat.BGR, frame_id=frame_id, ts=ts)
 
 
 def _pc2_from_ros(msg: "ROSPointCloud2") -> PointCloud2:

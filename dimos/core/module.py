@@ -481,12 +481,17 @@ class Module(ModuleBase[ModuleConfigT]):
     @rpc
     def configure_stream(self, stream_name: str, topic: str) -> bool:
         """Configure a stream's transport by topic. Called by DockerModule for stream wiring."""
-        from dimos.core.transport import pLCMTransport
+        from dimos.core.transport import LCMTransport, pLCMTransport
+        from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 
         stream = getattr(self, stream_name, None)
         if not isinstance(stream, (Out, In)):
             return False
-        stream._transport = pLCMTransport(topic)
+        parsed = LCMTopic.from_channel_str(topic)
+        if parsed.lcm_type is not None:
+            stream._transport = LCMTransport(parsed.topic, parsed.lcm_type)
+        else:
+            stream._transport = pLCMTransport(topic)
         return True
 
     # called from remote

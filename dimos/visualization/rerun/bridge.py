@@ -159,7 +159,7 @@ class Config(ModuleConfig):
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = "native"
-    viewer_debug: bool = False
+    viewer_debug: bool = True
     memory_limit: str = "25%"
 
     # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration

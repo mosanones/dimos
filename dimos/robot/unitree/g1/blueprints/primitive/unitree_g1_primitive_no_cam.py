@@ -98,6 +98,8 @@ unitree_g1_primitive_no_cam = (
             ("path_active", Path): LCMTransport("/path_active", Path),
             ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
             ("global_pointcloud", PointCloud2): LCMTransport("/map", PointCloud2),
+            ("overall_map", PointCloud2): LCMTransport("/overall_map", PointCloud2),
+            ("image", Image): LCMTransport("/camera", Image),
             # Original navigation topics for backwards compatibility
             ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
             ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),

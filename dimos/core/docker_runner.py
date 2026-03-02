@@ -227,7 +227,6 @@ class DockerModule:
 
         cmd = self._build_docker_run_command()
         logger.info(f"Starting docker container: {self._container_name}")
-        logger.info("docker run command:\n  " + " \\\n  ".join(cmd))
         r = _run(cmd, timeout=DOCKER_RUN_TIMEOUT)
         if r.returncode != 0:
             raise RuntimeError(
@@ -274,8 +273,8 @@ class DockerModule:
         topic = getattr(transport, "topic", None)
         if topic is None:
             return False
-        if hasattr(topic, "topic"):
-            topic = topic.topic
+        # Pass str(topic) which preserves type info (e.g. "/lidar#sensor_msgs.PointCloud2")
+        # so configure_stream can choose the right encoding (LCMTransport vs pLCMTransport).
         result, _ = self.rpc.call_sync(
             f"{self.remote_name}/configure_stream", ([stream_name, str(topic)], {})
         )
