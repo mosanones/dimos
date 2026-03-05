@@ -4,7 +4,7 @@ Source of truth: `plans/memory_2_spec_v_2.md`
 
 ## Context
 
-PR #1080 introduced `TimeSeriesStore[T]` with pluggable backends. Paul's review identified it mixes DB lifecycle, connection, and query concerns. `memory.md` describes a system where all sensor data is stored as temporal streams with spatial indexing, cross-stream correlation, and multimodal search. The spec (`memory_2_spec_v_2.md`) defines the full public API. This plan maps the spec to concrete SQLite implementation in `dimos/memory2/`.
+Check `questions.md`
 
 ## File Structure
 
@@ -12,7 +12,7 @@ PR #1080 introduced `TimeSeriesStore[T]` with pluggable backends. Paul's review 
 dimos/memory2/
     __init__.py              # public exports
     _sql.py                  # _validate_identifier(), SQL helpers
-    types.py                 # ObservationRef, ObservationMeta, ObservationRow, Lineage, StreamInfo
+    types.py                 # ObservationRef, ObservationRow, Lineage, StreamInfo
     db.py                    # DB (Resource lifecycle, SqliteDB)
     session.py               # Session (connection, stream factory, correlate)
     stream.py                # StreamBase, BlobStream, EmbeddingStream, TextStream
@@ -39,12 +39,13 @@ class ObservationRow:
     ref: ObservationRef
     ts: float | None = None
     pose: PoseLike | None = None
-    scores: dict[str, float] = field(default_factory=dict)
+    scores: dict[str, float] = field(default_factory=dict)  # query-time only (from rank/search), not stored
     tags: dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class Lineage:
-    parent_ref: ObservationRef | None = None  # single parent via parent_stream + parent_rowid
+    parent_stream: str | None = None   # from _streams registry (stream-level)
+    parent_rowid: int | None = None    # per-row: which row in parent stream
 ```
 
 Poses use DimOS's existing `PoseLike` type alias (`Pose | PoseStamped | Point | PointStamped`). Internally, `append()` extracts `(x, y, z, qx, qy, qz, qw)` floats for SQL storage; `load` reconstructs a `dimos.msgs.geometry_msgs.Pose` from stored floats. No custom Pose type.
@@ -79,16 +80,19 @@ SqliteDB internals:
 class StreamInfo:
     name: str
     payload_type: type
+    parent_stream: str | None     # lineage: all rows derive from this stream
     count: int
 
 class Session(ABC):
     def stream(self, name: str, payload_type: type, *,
                retention: str = "run") -> BlobStream: ...
     def embedding_stream(self, name: str, payload_type: type, *,
-                         dim: int, retention: str = "run") -> EmbeddingStream: ...
+                         dim: int, retention: str = "run",
+                         parent: StreamBase | None = None) -> EmbeddingStream: ...
     def text_stream(self, name: str, payload_type: type, *,
                     tokenizer: str = "unicode61",
-                    retention: str = "run") -> TextStream: ...
+                    retention: str = "run",
+                    parent: StreamBase | None = None) -> TextStream: ...
     def list_streams(self) -> list[StreamInfo]: ...
     def execute(self, sql: str, params=()) -> list: ...
     def close(self) -> None: ...
@@ -98,7 +102,18 @@ class Session(ABC):
 SqliteSession:
 - Holds one `sqlite3.Connection`
 - `stream()` / `embedding_stream()` / `text_stream()`: creates tables if needed (see schema below), caches StreamBase instances
-- Registers stream metadata in a `_streams` registry table
+- Registers stream metadata in a `_streams` registry table:
+
+```sql
+CREATE TABLE _streams (
+    rowid INTEGER PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    type TEXT NOT NULL,           -- 'blob', 'embedding', 'text'
+    payload_type TEXT NOT NULL,
+    parent_stream_id INTEGER,     -- FK to _streams.rowid (lineage)
+    retention TEXT DEFAULT 'run'
+);
+```
 
 ### Phase 2: Stream + Query + ObservationSet
 
@@ -108,8 +123,12 @@ SqliteSession:
 class StreamBase(ABC, Generic[T]):
     """Abstract base: meta + payload + spatial index. No text/vector indexes."""
     # Write
-    def append(self, payload: T, **meta: Any) -> ObservationRef: ...
-    def append_many(self, payloads, metas) -> list[ObservationRef]: ...
+    def append(self, payload: T, *,
+               ts: float | None = None,      # defaults to time.time()
+               pose: PoseLike | None = None,
+               tags: dict[str, Any] | None = None,
+               parent_rowid: int | None = None,
+               ) -> ObservationRef: ...
 
     # Read
     def query(self) -> Query[T]: ...
@@ -119,7 +138,7 @@ class StreamBase(ABC, Generic[T]):
     def count(self) -> int: ...
 
     # Introspection
-    def meta(self, ref: ObservationRef) -> ObservationMeta: ...
+    def meta(self, ref: ObservationRef) -> ObservationRow: ...
     def info(self) -> dict[str, Any]: ...
     def stats(self) -> dict[str, Any]: ...
 
@@ -127,9 +146,11 @@ class BlobStream(StreamBase[T]):
     """Concrete stream for arbitrary LCM-serializable payloads. No special indexes."""
 
 class EmbeddingStream(StreamBase[T]):
-    """Stream with a vec0 vector index. append() also inserts into _vec table."""
+    """Stream with a vec0 vector index. No _payload table — the vector in _vec IS the data."""
     def __init__(self, ..., *, dim: int): ...
     def vector(self, ref: ObservationRef) -> list[float] | None: ...
+    # append() inserts into _meta + _vec only (no _payload)
+    # load() not supported — use vector() instead
     # search_embedding() on Query is valid only for EmbeddingStream
 
 class TextStream(StreamBase[T]):
@@ -154,7 +175,7 @@ class Query(Generic[T]):
     def filter_refs(self, refs: list[ObservationRef]) -> Query[T]: ...
     def at(self, t: float, *, tolerance: float = 1.0) -> Query[T]: ...
 
-    # Candidate generation
+    # Candidate generation (raise TypeError if stream lacks the required index)
     def search_text(self, text: str, *, candidate_k: int | None = None) -> Query[T]: ...
     def search_embedding(self, vector: list[float], *, candidate_k: int) -> Query[T]: ...
 
@@ -170,10 +191,12 @@ class Query(Generic[T]):
     def one(self) -> ObservationRow: ...
 ```
 
+TODO: we want terminals also that generate some general spatial or temporal summary, maybe as a numpy array even
+
 Query internals:
 - Accumulates filter predicates, search ops, rank spec, ordering, limit
-- `at(t, tolerance)` → sugar for `filter_time(t - tol, t + tol)` + `ORDER BY ABS(ts_start - t) LIMIT 1`
-- `order_by(field, desc)` → appends `ORDER BY` clause; valid fields: `ts_start`, `ts_end`
+- `at(t, tolerance)` → sugar for `filter_time(t - tol, t + tol)` + `ORDER BY ABS(ts - t) LIMIT 1`
+- `order_by(field, desc)` → appends `ORDER BY` clause; valid fields: `ts`
 - `fetch()`: generates SQL, executes, returns rows
 - `fetch_set()`: creates an ObservationSet (predicate-backed or ref-table-backed)
 - search_embedding → sqlite-vec `MATCH`, writes top-k to temp table → ref-table-backed
@@ -251,8 +274,7 @@ CREATE TABLE {name}_meta (
     pose_x REAL, pose_y REAL, pose_z REAL,
     pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,
     tags TEXT,                     -- JSON (robot_id, frame_id, etc.)
-    parent_stream TEXT,            -- lineage: source stream name
-    parent_rowid INTEGER           -- lineage: source observation rowid
+    parent_rowid INTEGER           -- lineage: rowid in parent stream (parent defined at stream level)
 );
 CREATE INDEX idx_{name}_meta_ts ON {name}_meta(ts);
 ```
@@ -289,13 +311,13 @@ Spatial or spatio-temporal queries use the R*Tree.
 
 ```sql
 CREATE VIRTUAL TABLE {name}_fts USING fts5(
-    content,
-    content={name}_meta,
-    content_rowid=rowid
+    content
 );
 ```
 
-Created by `TextStream` subclass only.
+Created by `TextStream` subclass only. Standalone FTS5 table (no `content=` sync).
+`TextStream.append()` inserts the text into both `_payload` (as TEXT, not BLOB — `TextStream` overrides payload storage) and into the FTS5 table with the same rowid.
+FTS5 `rowid` matches `_meta.rowid`.
 
 ### Vector index (embedding search): `{name}_vec`
 
@@ -328,7 +350,7 @@ Only LCM message types are storable. `append()` calls `lcm_encode(payload)`, `lo
 
 ### ObservationRef identity
 
-`id` is a UUID4 string generated on `append()`. Never reuse timestamps as identity.
+`rowid` is an auto-assigned SQLite integer. Unique within a stream. `ObservationRef(stream, rowid)` is globally unique within a session.
 
 ### Unlocalized observations
 
