@@ -529,8 +529,9 @@ class SqliteEmbeddingBackend(SqliteStreamBackend):
 
         source_loader = None
         if pid is not None and parent_table is not None:
+            _pt: str = parent_table  # narrowed from str | None by the guard above
 
-            def _source_loader(parent_tbl: str = parent_table, parent_row_id: int = pid) -> Any:
+            def _source_loader(parent_tbl: str = _pt, parent_row_id: int = pid) -> Any:
                 r = conn.execute(
                     f"SELECT data FROM {parent_tbl}_payload WHERE id = ?", (parent_row_id,)
                 ).fetchone()
@@ -787,6 +788,14 @@ class SqliteSession(Session):
             target = self.embedding_stream(name, payload_type, parent_table=source_table)
         else:
             target = self.stream(name, payload_type)
+
+        # Record parent lineage in _streams registry
+        if source_table is not None:
+            self._conn.execute(
+                "UPDATE _streams SET parent_stream = ? WHERE name = ?",
+                (source_table, name),
+            )
+            self._conn.commit()
 
         # Backfill existing data
         if transformer.supports_backfill and not live:
