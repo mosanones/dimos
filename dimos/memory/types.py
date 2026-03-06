@@ -88,6 +88,7 @@ class StreamInfo:
     name: str
     payload_type: str | None = None
     count: int = 0
+    stream_kind: str = "stream"
 
 
 # ── Filter types ──────────────────────────────────────────────────────

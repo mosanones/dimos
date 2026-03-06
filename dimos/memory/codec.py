@@ -76,7 +76,7 @@ class JpegCodec:
         from turbojpeg import TJPF_BGR  # type: ignore[import-untyped]
 
         pf = self._get_tjpf_map().get(value.format.value, TJPF_BGR)
-        jpeg_data = self._tj.encode(value.data, quality=self._quality, pixel_format=pf)
+        jpeg_data: bytes = self._tj.encode(value.data, quality=self._quality, pixel_format=pf)
         frame_id = (value.frame_id or "").encode("utf-8")
         header = struct.pack("<H", len(frame_id)) + frame_id
         return header + jpeg_data

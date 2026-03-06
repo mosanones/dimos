@@ -12,26 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Memory module — ingests Image, PointCloud2, and pose into dimos.memory streams."""
+"""Memory module — record input streams into persistent memory."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+import cv2
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
 from dimos.memory.impl.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.utils.logging_config import setup_logger
 
+cv2.setNumThreads(1)
+
 if TYPE_CHECKING:
+    from reactivex.observable import Observable
+
+    from dimos.core.stream import In
     from dimos.memory.store import Session
-    from dimos.memory.stream import EmbeddingStream, Stream
+    from dimos.memory.stream import Stream
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
+
+
+@dataclass
+class RecordSpec:
+    """Declares an input stream to record."""
+
+    input_name: str
+    stream_name: str
+    payload_type: type | None = None
+    fps: float = 0
+    """Target FPS. If >0, uses sharpness_barrier to select best frame per window."""
 
 
 @dataclass
@@ -39,151 +56,71 @@ class MemoryModuleConfig(ModuleConfig):
     db_path: str = "memory.db"
     world_frame: str = "world"
     robot_frame: str = "base_link"
-    image_fps: float = 5.0
-    # CLIP embedding pipeline
-    enable_clip: bool = False
-    sharpness_window: float = 0.5
+    records: list[RecordSpec] = field(default_factory=list)
 
 
 class MemoryModule(Module[MemoryModuleConfig]):
-    """Ingests images and point clouds into persistent memory streams.
-
-    Pose is obtained implicitly from the TF system (world -> base_link).
-    Optionally builds a CLIP embedding index with sharpness-based quality filtering.
-
-    Usage::
-
-        memory = dimos.deploy(MemoryModule, db_path="/data/robot.db")
-        memory.color_image.connect(camera.color_image)
-        memory.pointcloud.connect(lidar.pointcloud)
-        memory.start()
-
-        # Query via session
-        session = memory.session
-        results = session.stream("images").after(t).near(pose, 5.0).fetch()
-    """
-
-    color_image: In[Image]
-    lidar: In[PointCloud2]
-
     default_config: type[MemoryModuleConfig] = MemoryModuleConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._store: SqliteStore | None = None
-        self._sessions: list[Session] = []
         self._session: Session | None = None
-        self._images: Stream[Image] | None = None
-        self._pointclouds: Stream[PointCloud2] | None = None
-        self._embeddings: EmbeddingStream[Any] | None = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
-    def _open_session(self) -> Session:
-        """Open a new session (own connection) from the shared store."""
-        assert self._store is not None
-        session = self._store.session()
-        self._sessions.append(session)
-        return session
+    def pose(self) -> PoseStamped | None:
+        return self.tf.get_pose(self.config.world_frame, self.config.robot_frame)  # type: ignore[no-any-return]
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        import cv2
-
-        cv2.setNumThreads(1)
-
         self._store = SqliteStore(self.config.db_path)
+        self._session = self._store.session()
+        self._disposables.add(self._session)
 
-        pose_fn = lambda: self.tf.get_pose(  # noqa: E731
-            self.config.world_frame, self.config.robot_frame
-        )
-
-        # Each session opens its own connection (WAL mode allows concurrent writes).
-
-        # Image stream (best-sharpness per window, no rx windowing overhead)
-        img_session = self._open_session()
-        self._images = img_session.stream("images", Image, pose_provider=pose_fn)
-        self._img_window = 1.0 / self.config.image_fps
-        self._img_best: Image | None = None
-        self._img_best_score: float = -1.0
-        self._img_window_start: float = 0.0
-        self._disposables.add(self.color_image.observable().subscribe(on_next=self._on_image))
-
-        # Pointcloud stream (only if transport is connected)
-        if self.lidar._transport is not None:
-            pc_session = self._open_session()
-            self._pointclouds = pc_session.stream("pointclouds", PointCloud2, pose_provider=pose_fn)
-            self._disposables.add(self.lidar.observable().subscribe(on_next=self._on_pointcloud))
-
-        # Read session (for queries / list_streams)
-        self._session = self._open_session()
-
-        # Optional CLIP embedding pipeline
-        if self.config.enable_clip:
-            self._setup_clip_pipeline()
+        # Auto-record streams declared in config
+        for spec in self.config.records:
+            input_stream: In[Any] = getattr(self, spec.input_name)
+            self.record(
+                input_stream,
+                spec.stream_name,
+                spec.payload_type,
+                fps=spec.fps,
+            )
 
         logger.info("MemoryModule started (db=%s)", self.config.db_path)
 
-    def _setup_clip_pipeline(self) -> None:
-        from dimos.memory.transformer import EmbeddingTransformer, QualityWindowTransformer
-        from dimos.models.embedding.clip import CLIPModel
+    def record(
+        self,
+        input: In[Any],
+        name: str,
+        payload_type: type | None = None,
+        fps: float = 0,
+    ) -> Stream[Any]:
+        assert self._store is not None, "record() called before start()"
+        session = self._store.session()
+        self._disposables.add(session)
+        stream = session.stream(name, payload_type, pose_provider=self.pose)
 
-        assert self._images is not None
+        obs: Observable[Any] = input.observable()
+        if fps > 0:
+            obs = obs.pipe(sharpness_barrier(fps))
 
-        clip = CLIPModel()
-        clip.start()
+        def _on_item(item: Any) -> None:
+            stream.append(item, ts=getattr(item, "ts", None))
 
-        sharp = self._images.transform(
-            QualityWindowTransformer(
-                lambda img: img.sharpness, window=self.config.sharpness_window
-            ),
-            live=True,
-        ).store("sharp_frames", Image)
+        self._disposables.add(obs.subscribe(on_next=_on_item))
 
-        self._embeddings = sharp.transform(  # type: ignore[assignment]
-            EmbeddingTransformer(clip), live=True
-        ).store("clip_embeddings")
-
-        logger.info("CLIP embedding pipeline active")
+        return stream
 
     @rpc
     def stop(self) -> None:
-        # Flush the last sharpness window so the final image isn't lost
-        if self._img_best is not None and self._images is not None:
-            self._images.append(self._img_best, ts=self._img_best.ts)
-            self._img_best = None
         self._session = None
-        for session in self._sessions:
-            session.close()
-        self._sessions.clear()
+        super().stop()  # disposes all sessions via CompositeDisposable
         if self._store is not None:
             self._store.close()
             self._store = None
-        super().stop()
-
-    # ── Callbacks ─────────────────────────────────────────────────────
-
-    def _on_image(self, img: Image) -> None:
-        if self._images is None:
-            return
-        now = time.monotonic()
-        score = img.sharpness
-        if now - self._img_window_start >= self._img_window:
-            # Window elapsed — flush best from previous window, start new one
-            if self._img_best is not None:
-                self._images.append(self._img_best, ts=self._img_best.ts)
-            self._img_best = img
-            self._img_best_score = score
-            self._img_window_start = now
-        elif score > self._img_best_score:
-            self._img_best = img
-            self._img_best_score = score
-
-    def _on_pointcloud(self, pc: PointCloud2) -> None:
-        if self._pointclouds is not None:
-            self._pointclouds.append(pc, ts=pc.ts)
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -193,22 +130,6 @@ class MemoryModule(Module[MemoryModuleConfig]):
             raise RuntimeError("MemoryModule not started")
         return self._session
 
-    @property
-    def images(self) -> Stream[Image]:
-        if self._images is None:
-            raise RuntimeError("MemoryModule not started")
-        return self._images
-
-    @property
-    def pointclouds(self) -> Stream[PointCloud2]:
-        if self._pointclouds is None:
-            raise RuntimeError("MemoryModule not started or no pointcloud connected")
-        return self._pointclouds
-
-    @property
-    def embeddings(self) -> EmbeddingStream[Any] | None:
-        return self._embeddings
-
     @rpc
     def get_stats(self) -> dict[str, int]:
         if self._session is None:
@@ -216,4 +137,6 @@ class MemoryModule(Module[MemoryModuleConfig]):
         return {s.name: s.count for s in self._session.list_streams()}
 
 
+memory_module = MemoryModule.blueprint
+memory_module = MemoryModule.blueprint
 memory_module = MemoryModule.blueprint

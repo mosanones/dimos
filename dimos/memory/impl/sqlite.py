@@ -882,13 +882,19 @@ class SqliteSession(Session):
         return es
 
     def list_streams(self) -> list[StreamInfo]:
-        rows = self._conn.execute("SELECT name, payload_module FROM _streams").fetchall()
+        rows = self._conn.execute(
+            "SELECT name, payload_module, stream_kind FROM _streams"
+        ).fetchall()
         result: list[StreamInfo] = []
-        for name, pmodule in rows:
+        for name, pmodule, kind in rows:
             _validate_identifier(name)
             count_row = self._conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()
             count = count_row[0] if count_row else 0
-            result.append(StreamInfo(name=name, payload_type=pmodule, count=count))
+            result.append(
+                StreamInfo(
+                    name=name, payload_type=pmodule, count=count, stream_kind=kind or "stream"
+                )
+            )
         return result
 
     def materialize_transform(

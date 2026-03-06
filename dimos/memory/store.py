@@ -17,6 +17,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
+from reactivex.abc import DisposableBase
+
 if TYPE_CHECKING:
     from dimos.models.embedding.base import EmbeddingModel
 
@@ -25,8 +27,14 @@ if TYPE_CHECKING:
     from .types import PoseProvider, StreamInfo
 
 
-class Session(ABC):
-    """A session against a memory store. Creates and manages streams."""
+class Session(DisposableBase, ABC):
+    """A session against a memory store. Creates and manages streams.
+
+    Inherits DisposableBase so sessions can be added to CompositeDisposable.
+    """
+
+    def dispose(self) -> None:
+        self.close()
 
     @abstractmethod
     def stream(
@@ -96,9 +104,6 @@ class Session(ABC):
 
     def __enter__(self) -> Session:
         return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
 
 
 class Store(ABC):
