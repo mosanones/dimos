@@ -71,6 +71,7 @@ from dimos.memory.type import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    import os
 
     from dimos.memory.type import PoseProvider
     from dimos.models.embedding.base import EmbeddingModel
@@ -404,7 +405,7 @@ class SqliteStreamBackend:
         if ts is None:
             ts = time.time()
         if pose is None and self._pose_provider is not None:
-            pose = self._pose_provider()
+            pose = self._pose_provider(ts)
 
         pose_cols = _decompose_pose(pose)
         tags_json = _serialize_tags(tags)
@@ -996,8 +997,8 @@ class SqliteStore(Store):
     and extensions loaded.  Sessions are safe to use from different threads.
     """
 
-    def __init__(self, path: str) -> None:
-        self._path = path
+    def __init__(self, path: str | os.PathLike[str]) -> None:
+        self._path = str(path)
         self._closed = False
 
     def _connect(self) -> sqlite3.Connection:
