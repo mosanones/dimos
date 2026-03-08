@@ -483,12 +483,13 @@ class EmbeddingStream(Stream[T]):
         query: Embedding | list[float] | str | Any,
         *,
         k: int,
+        model: EmbeddingModel | None = None,
     ) -> EmbeddingStream[T]:
         """Search by vector similarity.
 
         Accepts pre-computed embeddings, raw float lists, text strings, or
         images/other objects.  Text and non-vector inputs are auto-embedded
-        using the model that created this stream.
+        using the model that created this stream (or the ``model`` override).
 
         Returns an EmbeddingStream — use ``.project_to(source)`` to get
         results in the source stream's type, or ``.fetch()`` for
@@ -496,8 +497,14 @@ class EmbeddingStream(Stream[T]):
         """
         from dimos.models.embedding.base import Embedding as EmbeddingCls
 
+        resolve = model or self._embedding_model
         if isinstance(query, str):
-            emb = self._require_model().embed_text(query)
+            if resolve is None:
+                raise TypeError(
+                    "No embedding model available. Pass model= or use a "
+                    "pre-computed Embedding / list[float]."
+                )
+            emb = resolve.embed_text(query)
             if isinstance(emb, list):
                 emb = emb[0]
             return self.search_embedding(emb, k=k)
@@ -508,7 +515,12 @@ class EmbeddingStream(Stream[T]):
             vec = list(query)
         else:
             # Assume embeddable object (Image, etc.)
-            emb = self._require_model().embed(query)
+            if resolve is None:
+                raise TypeError(
+                    "No embedding model available. Pass model= or use a "
+                    "pre-computed Embedding / list[float]."
+                )
+            emb = resolve.embed(query)
             if isinstance(emb, list):
                 emb = emb[0]
             return self.search_embedding(emb, k=k)
