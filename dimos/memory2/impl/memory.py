@@ -79,47 +79,7 @@ class ListBackend(Generic[T]):
     def _iterate_snapshot(self, query: StreamQuery) -> Iterator[Observation[T]]:
         with self._lock:
             snapshot = list(self._observations)
-
-        # Apply filters
-        for f in query.filters:
-            snapshot = [obs for obs in snapshot if f.matches(obs)]
-
-        # Text search — substring match (SqliteBackend will use FTS5)
-        if query.search_text is not None:
-            needle = query.search_text.lower()
-            snapshot = [obs for obs in snapshot if needle in str(obs.data).lower()]
-
-        # Vector search — brute-force cosine via Embedding.__matmul__
-        if query.search_vec is not None:
-            query_emb = query.search_vec
-            scored: list[Observation[T]] = []
-            for obs in snapshot:
-                emb = getattr(obs, "embedding", None)
-                if emb is not None:
-                    sim = float(emb @ query_emb)
-                    scored.append(obs.derive(data=obs.data, similarity=sim))
-            scored.sort(key=lambda o: getattr(o, "similarity", 0.0) or 0.0, reverse=True)
-            if query.search_k is not None:
-                scored = scored[: query.search_k]
-            snapshot = scored
-
-        # Ordering
-        if query.order_field:
-            key = query.order_field
-            snapshot.sort(
-                key=lambda obs: getattr(obs, key) if getattr(obs, key, None) is not None else 0,
-                reverse=query.order_desc,
-            )
-
-        # Offset
-        if query.offset_val:
-            snapshot = snapshot[query.offset_val :]
-
-        # Limit
-        if query.limit_val is not None:
-            snapshot = snapshot[: query.limit_val]
-
-        yield from snapshot
+        yield from query.apply(iter(snapshot))
 
     def _iterate_live(
         self,

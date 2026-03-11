@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from itertools import islice
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -85,58 +84,7 @@ class Stream(Generic[T]):
         """Iterate a transform source, applying query filters in Python."""
         assert isinstance(self._source, Stream) and self._xf is not None
         it: Iterator[Observation[T]] = self._xf(iter(self._source))
-
-        # Apply filters as Python predicates
-        filters = self._query.filters
-        if filters:
-            it = (obs for obs in it if all(f.matches(obs) for f in filters))
-
-        # Text search — substring match
-        if self._query.search_text is not None:
-            needle = self._query.search_text.lower()
-            it = (obs for obs in it if needle in str(obs.data).lower())
-
-        # Vector search — brute-force cosine (materializes — rejects live)
-        if self._query.search_vec is not None:
-            if self.is_live():
-                raise TypeError(
-                    ".search() requires finite data — cannot rank an infinite live stream."
-                )
-            query_emb = self._query.search_vec
-            scored = []
-            for obs in it:
-                emb = getattr(obs, "embedding", None)
-                if emb is not None:
-                    sim = float(emb @ query_emb)
-                    scored.append(obs.derive(data=obs.data, similarity=sim))
-            scored.sort(key=lambda o: getattr(o, "similarity", 0.0) or 0.0, reverse=True)
-            k = self._query.search_k
-            if k is not None:
-                scored = scored[:k]
-            it = iter(scored)
-
-        # Sort if needed (materializes — rejects live)
-        if self._query.order_field:
-            if self.is_live():
-                raise TypeError(
-                    ".order_by() requires finite data — cannot sort an infinite live stream."
-                )
-            key = self._query.order_field
-            desc = self._query.order_desc
-            items = sorted(
-                list(it),
-                key=lambda obs: getattr(obs, key) if getattr(obs, key, None) is not None else 0,
-                reverse=desc,
-            )
-            it = iter(items)
-
-        # Offset + limit
-        if self._query.offset_val:
-            it = islice(it, self._query.offset_val, None)
-        if self._query.limit_val is not None:
-            it = islice(it, self._query.limit_val)
-
-        return it
+        return self._query.apply(it, live=self.is_live())
 
     # ── Query builders ──────────────────────────────────────────────
 

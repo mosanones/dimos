@@ -14,13 +14,22 @@ Store → Session → Stream → [filters / transforms / terminals] → Stream  
 
 **Store** owns a storage location (file, in-memory). **Session** manages named streams over a shared connection. **Stream** is the query/iteration surface — lazy until a terminal is called.
 
+
+Supporting Systems:
+
+- BlobStore — separates large payloads from metadata. FileBlobStore (files on disk) and SqliteBlobStore (blob table per stream). Supports lazy loading.
+- Codecs — codec_for() auto-selects: JpegCodec for images (TurboJPEG, ~10-20x compression), LcmCodec for DimOS messages, PickleCodec fallback.
+- Transformers — Transformer[T,R] ABC wrapping iterator-to-iterator. EmbedImages/EmbedText enrich observations with embeddings. QualityWindow keeps best per time window.
+- Backpressure Buffers — KeepLast, Bounded, DropNew, Unbounded — bridge push/pull for live mode.
+
+
 ## Modules
 
 | Module         | What                                                              |
 |----------------|-------------------------------------------------------------------|
 | `stream.py`    | Stream node — filters, transforms, terminals                      |
 | `backend.py`   | Backend / LiveBackend protocols, VectorStore / BlobStore ABCs     |
-| `filter.py`    | StreamQuery dataclass, filter types                               |
+| `filter.py`    | StreamQuery dataclass, filter types, Python query execution       |
 | `transform.py` | Transformer protocol, FnTransformer, QualityWindow                |
 | `buffer.py`    | Backpressure buffers for live mode (KeepLast, Bounded, Unbounded) |
 | `store.py`     | Store / Session base classes, StreamNamespace                     |
@@ -32,7 +41,7 @@ Store → Session → Stream → [filters / transforms / terminals] → Stream  
 | Package      | What                                                 | Docs                                             |
 |--------------|------------------------------------------------------|--------------------------------------------------|
 | `impl/`      | Backend implementations (ListBackend, SqliteBackend) | [impl/README.md](impl/README.md)                 |
-| `blobstore/` | Pluggable blob storage (file, sqlite)                | [blobstore/blobstore.md](blobstore/blobstore.md) |
+| `blobstore/` | Pluggable blob storage (file, sqlite)                | e[blobstore/blobstore.md](blobstore/blobstore.md) |
 | `codecs/`    | Encode/decode for storage (pickle, JPEG, LCM)        | [codecs/README.md](codecs/README.md)             |
 
 ## Docs
@@ -42,6 +51,24 @@ Store → Session → Stream → [filters / transforms / terminals] → Stream  
 | [streaming.md](streaming.md) | Lazy vs materializing vs terminal — evaluation model, live safety |
 | [embeddings.md](embeddings.md) | Embedding layer design — EmbeddedObservation, vector search, EmbedImages/EmbedText |
 | [blobstore/blobstore.md](blobstore/blobstore.md) | BlobStore architecture — separate payload storage from metadata |
+
+## Query execution
+
+`StreamQuery` holds the full query spec (filters, text search, vector search, ordering, offset/limit). It also provides `apply(iterator)` — a Python-side execution path that runs all operations as in-memory predicates, brute-force cosine, and list sorts.
+
+This is the **default fallback**. Backends are free to push down operations using store-specific strategies instead:
+
+| Operation      | Python fallback (`StreamQuery.apply`) | Store push-down (example)        |
+|----------------|---------------------------------------|----------------------------------|
+| Filters        | `filter.matches()` predicates         | SQL WHERE clauses                |
+| Text search    | Case-insensitive substring            | FTS5 full-text index             |
+| Vector search  | Brute-force cosine similarity         | vec0 / FAISS ANN index           |
+| Ordering       | `sorted()` materialization            | SQL ORDER BY                     |
+| Offset / limit | `islice()`                            | SQL OFFSET / LIMIT               |
+
+`ListBackend` delegates entirely to `StreamQuery.apply()`. `SqliteBackend` translates the query into SQL and only falls back to Python for operations it can't express natively.
+
+Transform-sourced streams (post `.transform()`) always use `StreamQuery.apply()` since there's no backend to push down to.
 
 ## Quick start
 

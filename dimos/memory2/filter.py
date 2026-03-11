@@ -15,10 +15,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import islice
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from dimos.memory2.buffer import BackpressureBuffer
     from dimos.memory2.type import Observation
@@ -137,3 +138,62 @@ class StreamQuery:
     search_k: int | None = None
     # Full-text search (substring / FTS5)
     search_text: str | None = None
+
+    def apply(
+        self, it: Iterator[Observation[Any]], *, live: bool = False
+    ) -> Iterator[Observation[Any]]:
+        """Apply all query operations to an iterator in Python.
+
+        Used as the fallback execution path for transform-sourced streams
+        and in-memory backends. Backends with native query support (SQL,
+        ANN indexes) should push down operations instead.
+        """
+        # Filters
+        if self.filters:
+            it = (obs for obs in it if all(f.matches(obs) for f in self.filters))
+
+        # Text search — substring match
+        if self.search_text is not None:
+            needle = self.search_text.lower()
+            it = (obs for obs in it if needle in str(obs.data).lower())
+
+        # Vector search — brute-force cosine (materializes)
+        if self.search_vec is not None:
+            if live:
+                raise TypeError(
+                    ".search() requires finite data — cannot rank an infinite live stream."
+                )
+            query_emb = self.search_vec
+            scored = []
+            for obs in it:
+                emb = getattr(obs, "embedding", None)
+                if emb is not None:
+                    sim = float(emb @ query_emb)
+                    scored.append(obs.derive(data=obs.data, similarity=sim))
+            scored.sort(key=lambda o: getattr(o, "similarity", 0.0) or 0.0, reverse=True)
+            if self.search_k is not None:
+                scored = scored[: self.search_k]
+            it = iter(scored)
+
+        # Sort (materializes)
+        if self.order_field:
+            if live:
+                raise TypeError(
+                    ".order_by() requires finite data — cannot sort an infinite live stream."
+                )
+            key = self.order_field
+            desc = self.order_desc
+            items = sorted(
+                list(it),
+                key=lambda obs: getattr(obs, key) if getattr(obs, key, None) is not None else 0,
+                reverse=desc,
+            )
+            it = iter(items)
+
+        # Offset + limit
+        if self.offset_val:
+            it = islice(it, self.offset_val, None)
+        if self.limit_val is not None:
+            it = islice(it, self.limit_val)
+
+        return it

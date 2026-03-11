@@ -102,6 +102,30 @@ Use `pytest.mark.xfail` for features not yet implemented — the grid test cover
 
 ### Query contract
 
-The backend must handle the full `StreamQuery`. The Stream layer does NOT apply filters to backend results — it trusts the backend to do so. This allows backends to push queries down to their native query engine (SQL WHERE, FTS5 MATCH, vec0 knn).
+The backend must handle the full `StreamQuery`. The Stream layer does NOT apply filters to backend results — it trusts the backend to do so.
+
+`StreamQuery.apply(iterator)` provides a complete Python-side execution path — filters, text search, vector search, ordering, offset/limit — all as in-memory operations. Backends can use it in three ways:
+
+**Full delegation** — simplest, good enough for in-memory backends:
+```python
+def iterate(self, query: StreamQuery) -> Iterator[Observation[T]]:
+    return query.apply(iter(self._data))
+```
+
+**Partial push-down** — handle some operations natively, delegate the rest:
+```python
+def iterate(self, query: StreamQuery) -> Iterator[Observation[T]]:
+    # Handle filters and ordering in SQL
+    rows = self._sql_query(query.filters, query.order_field, query.order_desc)
+    # Delegate remaining operations (vector search, text search, offset/limit) to Python
+    remaining = StreamQuery(
+        search_vec=query.search_vec, search_k=query.search_k,
+        search_text=query.search_text,
+        offset_val=query.offset_val, limit_val=query.limit_val,
+    )
+    return remaining.apply(iter(rows))
+```
+
+**Full push-down** — translate everything to native queries (SQL WHERE, FTS5 MATCH, vec0 knn) without calling `apply()` at all.
 
 For filters, each `Filter` object has a `.matches(obs) -> bool` method that backends can use directly if they don't have a native equivalent.
