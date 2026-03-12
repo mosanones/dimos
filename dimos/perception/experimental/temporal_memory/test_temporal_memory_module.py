@@ -339,7 +339,8 @@ class TestPersistence:
         ):
             tm = TemporalMemory(
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
-                config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=True),
+                db_dir=str(db_dir),
+                new_memory=True,
             )
             # DB should be empty since we cleared it
             stats = tm._graph_db.get_stats()
@@ -363,7 +364,8 @@ class TestPersistence:
         ):
             tm = TemporalMemory(
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
-                config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=False),
+                db_dir=str(db_dir),
+                new_memory=False,
             )
             stats = tm._graph_db.get_stats()
             assert stats["entities"] == 1
@@ -388,7 +390,7 @@ class TestJSONLLogging:
         ):
             tm = TemporalMemory(
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
-                config=TemporalMemoryConfig(db_dir=str(db_dir)),
+                db_dir=str(db_dir),
             )
 
         jsonl_path = log_dir / "temporal_memory" / "temporal_memory.jsonl"
@@ -429,7 +431,8 @@ class TestEntityMarkers:
         ):
             tm = TemporalMemory(
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
-                config=TemporalMemoryConfig(db_dir=str(db_dir), visualize=True),
+                db_dir=str(db_dir),
+                visualize=True,
             )
 
         # Populate DB with world positions
