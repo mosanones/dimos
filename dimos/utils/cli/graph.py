@@ -143,9 +143,8 @@ h2 {{ padding: 0.6em 1em 0.3em; border-bottom: 1px solid #444; position: relativ
     background: rgba(30,30,30,0.7) !important; background-color: rgba(30,30,30,0.7) !important;
     border-radius: 6px; padding: 2px 6px;
 }}
-.node .label, .node foreignObject span, .node foreignObject div {{
-    text-shadow: -1px -1px 0 #777, 1px -1px 0 #777, -1px 1px 0 #777, 1px 1px 0 #777;
-}}
+.moduleNode .nodeLabel {{ font-size: 38px !important; font-weight: 600 !important; display: block !important; transform: scale(0.7) !important; }}
+.streamNode .nodeLabel {{ font-size: 18px !important; }}
 </style>
 </head><body>
 {"".join(sections)}
@@ -161,7 +160,7 @@ mermaid.initialize({{
     theme: 'dark',
     flowchart: {{
         curve: 'basis',
-        padding: 20,
+        padding: 8,
         nodeSpacing: 60,
         rankSpacing: 80,
     }},
@@ -175,6 +174,35 @@ document.querySelectorAll('.viewport').forEach(vp => {{
     const svg = canvas.querySelector('svg');
     let scale, panX, panY;
     let dragging = false, startX, startY;
+
+    // Resize nodes: shrink stream nodes, enlarge module nodes
+    svg.querySelectorAll('.node').forEach(node => {{
+        const rect = node.querySelector('rect');
+        if (!rect) return;
+        const w = parseFloat(rect.getAttribute('width'));
+        const h = parseFloat(rect.getAttribute('height'));
+        const x = parseFloat(rect.getAttribute('x'));
+        const y = parseFloat(rect.getAttribute('y'));
+        if (!w || !h) return;
+        const isStream = rect.getAttribute('style')?.includes('fill: transparent') ||
+                         rect.style.fill === 'transparent';
+        if (isStream) {{
+            const gx = 4, gy = 2;
+            rect.setAttribute('width', w + gx * 2);
+            rect.setAttribute('height', h + gy * 2);
+            rect.setAttribute('x', x - gx);
+            rect.setAttribute('y', y - gy);
+            node.querySelectorAll('span, text, div').forEach(el => {{
+                el.style.fontSize = '14px';
+            }});
+        }} else {{
+            const gx = 30, gy = 18;
+            rect.setAttribute('width', w + gx * 2);
+            rect.setAttribute('height', h + gy * 2);
+            rect.setAttribute('x', x - gx);
+            rect.setAttribute('y', y - gy);
+        }}
+    }});
 
     // Fix edge label foreignObjects and simplify DOM
     svg.querySelectorAll('.edgeLabel').forEach(label => {{

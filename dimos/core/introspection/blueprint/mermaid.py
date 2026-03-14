@@ -247,72 +247,97 @@ def render(
     sorted_modules = sorted(module_names)
     for mod_name in sorted_modules:
         mid = _mermaid_id(mod_name)
-        lines.append(f"    {mid}([{mod_name}])")
+        lines.append(f"    {mid}([{mod_name}]):::moduleNode")
 
     lines.append("")
 
-    # Active edges (track index for linkStyle)
     edge_idx = 0
     edge_colors: list[str] = []
     label_color_map: dict[str, str] = {}
+    stream_node_ids: dict[str, str] = {}  # stream_node_id -> color
+    disconnected_labels: set[str] = set()
 
+    # Active streams: producer -> stream-node -> consumers
+    lines.append("    %% Stream nodes and edges")
     for key in sorted(active_keys, key=lambda k: f"{k[0]}:{k[1].__name__}"):
         name, type_ = key
         label = f"{name}:{type_.__name__}"
         color = edge_color(label)
         label_color_map[label] = color
-        for prod in producers[key]:
-            if prod.__name__ in ignored_modules:
-                continue
-            for cons in consumers[key]:
-                if cons.__name__ in ignored_modules:
-                    continue
-                pid = _mermaid_id(prod.__name__)
+
+        valid_producers = [m for m in producers[key] if m.__name__ not in ignored_modules]
+        valid_consumers = [m for m in consumers[key] if m.__name__ not in ignored_modules]
+
+        for prod in valid_producers:
+            # Create a stream node per producer+stream pair
+            sn_id = _mermaid_id(f"{prod.__name__}_{name}_{type_.__name__}")
+            if sn_id not in stream_node_ids:
+                lines.append(f"    {sn_id}[{label}]:::streamNode")
+                stream_node_ids[sn_id] = color
+
+            # Edge: producer --- stream-node (no arrow, module color)
+            pid = _mermaid_id(prod.__name__)
+            lines.append(f"    {pid} --- {sn_id}")
+            edge_colors.append(node_color(prod.__name__))
+            edge_idx += 1
+
+            # Edges: stream-node -> each consumer
+            for cons in valid_consumers:
                 cid = _mermaid_id(cons.__name__)
-                lines.append(f'    {pid} -->|"{label}"| {cid}')
+                lines.append(f"    {sn_id} --> {cid}")
                 edge_colors.append(color)
                 edge_idx += 1
 
-    # Disconnected edges
-    disconnected_labels: set[str] = set()
+    # Disconnected streams
     if disconnected_keys:
         lines.append("")
         lines.append("    %% Disconnected streams")
-        stub_counter = 0
         for key in sorted(disconnected_keys, key=lambda k: f"{k[0]}:{k[1].__name__}"):
             name, type_ = key
             label = f"{name}:{type_.__name__}"
             color = edge_color(label)
             label_color_map[label] = color
             disconnected_labels.add(label)
-            stub_id = f"stub{stub_counter}"
-            stub_counter += 1
-            lines.append(f"    {stub_id}(( ))")
-            lines.append(f"    style {stub_id} fill:#555,stroke:#888,stroke-width:1px")
 
             for prod in producers.get(key, []):
                 if prod.__name__ in ignored_modules:
                     continue
+                sn_id = _mermaid_id(f"{prod.__name__}_{name}_{type_.__name__}")
+                if sn_id not in stream_node_ids:
+                    lines.append(f"    {sn_id}[{label}]:::streamNode")
+                    stream_node_ids[sn_id] = color
                 pid = _mermaid_id(prod.__name__)
-                lines.append(f'    {pid} -.->|"{label}"| {stub_id}')
-                edge_colors.append(color)
+                lines.append(f"    {pid} -.- {sn_id}")
+                edge_colors.append(node_color(prod.__name__))
                 edge_idx += 1
+
             for cons in consumers.get(key, []):
                 if cons.__name__ in ignored_modules:
                     continue
+                # Consumer-only: create a standalone stream node
+                sn_id = _mermaid_id(f"dangling_{name}_{type_.__name__}")
+                if sn_id not in stream_node_ids:
+                    lines.append(f"    {sn_id}[{label}]:::streamNode")
+                    stream_node_ids[sn_id] = color
                 cid = _mermaid_id(cons.__name__)
-                lines.append(f'    {stub_id} -.->|"{label}"| {cid}')
+                lines.append(f"    {sn_id} -.-> {cid}")
                 edge_colors.append(color)
                 edge_idx += 1
 
-    # Node styles
+    # Module node styles (colored fill)
     lines.append("")
     for mod_name in sorted_modules:
         mid = _mermaid_id(mod_name)
         c = node_color(mod_name)
         lines.append(f"    style {mid} fill:{c}bf,stroke:{c},color:#eee,stroke-width:2px")
 
-    # Edge styles (one linkStyle per edge index)
+    # Stream node styles (no fill, colored text and border)
+    for sn_id, color in stream_node_ids.items():
+        lines.append(
+            f"    style {sn_id} fill:transparent,stroke:{color},color:{color},stroke-width:1px"
+        )
+
+    # Edge styles
     if edge_colors:
         lines.append("")
         for i, c in enumerate(edge_colors):
