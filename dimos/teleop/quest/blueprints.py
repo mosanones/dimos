@@ -18,17 +18,13 @@
 from dimos.control.blueprints import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
-    coordinator_teleop_xarm6,
+    coordinator_teleop_xarm7,
 )
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import arm_teleop_module, visualizing_teleop_module
 from dimos.teleop.quest.quest_types import Buttons
-
-# -----------------------------------------------------------------------------
-# Quest Teleop Blueprints
-# -----------------------------------------------------------------------------
 
 # Arm teleop with press-and-hold engage
 arm_teleop = autoconnect(
@@ -53,16 +49,12 @@ arm_teleop_visualizing = autoconnect(
 )
 
 
-# -----------------------------------------------------------------------------
-# Teleop wired to Coordinator (TeleopIK)
-# -----------------------------------------------------------------------------
+# Single XArm7 teleop: right controller -> xarm7
+# Usage: dimos run arm-teleop-xarm7
 
-# Single XArm6 teleop: right controller -> xarm6
-# Usage: dimos run arm-teleop-xarm6
-
-arm_teleop_xarm6 = autoconnect(
+arm_teleop_xarm7 = autoconnect(
     arm_teleop_module(task_names={"right": "teleop_xarm"}),
-    coordinator_teleop_xarm6,
+    coordinator_teleop_xarm7,
 ).transports(
     {
         ("right_controller_output", PoseStamped): LCMTransport(
@@ -110,5 +102,5 @@ __all__ = [
     "arm_teleop_dual",
     "arm_teleop_piper",
     "arm_teleop_visualizing",
-    "arm_teleop_xarm6",
+    "arm_teleop_xarm7",
 ]

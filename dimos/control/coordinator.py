@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
@@ -49,13 +49,9 @@ from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Twist,
-)
-from dimos.msgs.sensor_msgs import (
-    JointState,
-)
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -66,11 +62,6 @@ if TYPE_CHECKING:
 
 
 logger = setup_logger()
-
-
-# =============================================================================
-# Configuration
-# =============================================================================
 
 
 @dataclass
@@ -84,6 +75,10 @@ class TaskConfig:
         priority: Task priority (higher wins arbitration)
         model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
         ee_joint_id: End-effector joint ID in model (cartesian_ik/teleop_ik only)
+        hand: "left" or "right" controller hand (teleop_ik only)
+        gripper_joint: Joint name for gripper virtual joint
+        gripper_open_pos: Gripper position at trigger 0.0
+        gripper_closed_pos: Gripper position at trigger 1.0
     """
 
     name: str
@@ -93,10 +88,13 @@ class TaskConfig:
     # Cartesian IK / Teleop IK specific
     model_path: str | Path | None = None
     ee_joint_id: int = 6
-    hand: str = ""  # teleop_ik only: "left" or "right" controller
+    hand: Literal["left", "right"] | None = None  # teleop_ik only
+    # Teleop IK gripper specific
+    gripper_joint: str | None = None
+    gripper_open_pos: float = 0.0
+    gripper_closed_pos: float = 0.0
 
 
-@dataclass
 class ControlCoordinatorConfig(ModuleConfig):
     """Configuration for the ControlCoordinator.
 
@@ -115,11 +113,6 @@ class ControlCoordinatorConfig(ModuleConfig):
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
-
-
-# =============================================================================
-# ControlCoordinator Module
-# =============================================================================
 
 
 class ControlCoordinator(Module[ControlCoordinatorConfig]):
@@ -194,10 +187,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
-    # =========================================================================
-    # Config-based Setup
-    # =========================================================================
-
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
         hardware_added: list[str] = []
@@ -265,7 +254,10 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         task_type = cfg.type.lower()
 
         if task_type == "trajectory":
-            from dimos.control.tasks import JointTrajectoryTask, JointTrajectoryTaskConfig
+            from dimos.control.tasks.trajectory_task import (
+                JointTrajectoryTask,
+                JointTrajectoryTaskConfig,
+            )
 
             return JointTrajectoryTask(
                 cfg.name,
@@ -276,7 +268,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             )
 
         elif task_type == "servo":
-            from dimos.control.tasks import JointServoTask, JointServoTaskConfig
+            from dimos.control.tasks.servo_task import JointServoTask, JointServoTaskConfig
 
             return JointServoTask(
                 cfg.name,
@@ -287,7 +279,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             )
 
         elif task_type == "velocity":
-            from dimos.control.tasks import JointVelocityTask, JointVelocityTaskConfig
+            from dimos.control.tasks.velocity_task import JointVelocityTask, JointVelocityTaskConfig
 
             return JointVelocityTask(
                 cfg.name,
@@ -298,7 +290,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             )
 
         elif task_type == "cartesian_ik":
-            from dimos.control.tasks import CartesianIKTask, CartesianIKTaskConfig
+            from dimos.control.tasks.cartesian_ik_task import CartesianIKTask, CartesianIKTaskConfig
 
             if cfg.model_path is None:
                 raise ValueError(f"CartesianIKTask '{cfg.name}' requires model_path in TaskConfig")
@@ -327,15 +319,14 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     ee_joint_id=cfg.ee_joint_id,
                     priority=cfg.priority,
                     hand=cfg.hand,
+                    gripper_joint=cfg.gripper_joint,
+                    gripper_open_pos=cfg.gripper_open_pos,
+                    gripper_closed_pos=cfg.gripper_closed_pos,
                 ),
             )
 
         else:
             raise ValueError(f"Unknown task type: {task_type}")
-
-    # =========================================================================
-    # Hardware Management (RPC)
-    # =========================================================================
 
     @rpc
     def add_hardware(
@@ -345,6 +336,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
         is_base = component.hardware_type == HardwareType.BASE
+
         if is_base != isinstance(adapter, TwistBaseAdapter):
             raise TypeError(
                 f"Hardware type / adapter mismatch for '{component.hardware_id}': "
@@ -435,10 +427,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     positions[joint_name] = joint_state.position
             return positions
 
-    # =========================================================================
-    # Task Management (RPC)
-    # =========================================================================
-
     @rpc
     def add_task(self, task: ControlTask) -> bool:
         """Register a task with the coordinator."""
@@ -480,10 +468,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         """List currently active task names."""
         with self._task_lock:
             return [name for name, task in self._tasks.items() if task.is_active()]
-
-    # =========================================================================
-    # Streaming Control
-    # =========================================================================
 
     def _on_joint_command(self, msg: JointState) -> None:
         """Route incoming JointState to streaming tasks by joint name.
@@ -592,10 +576,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
             return getattr(task, method)(**kwargs)
 
-    # =========================================================================
-    # Gripper
-    # =========================================================================
-
     @rpc
     def set_gripper_position(self, hardware_id: str, position: float) -> bool:
         """Set gripper position on a specific hardware device.
@@ -628,10 +608,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             if isinstance(hw, ConnectedTwistBase):
                 return None
             return hw.adapter.read_gripper_position()
-
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
 
     @rpc
     def start(self) -> None:

@@ -35,13 +35,15 @@ import os
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
+    make_gripper_joints,
     make_joints,
     make_twist_base_joints,
 )
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.data import LfsPath
 
@@ -50,11 +52,8 @@ _XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 
 _ARM_IP = os.getenv("ARM_IP")
 _CAN_PORT = os.getenv("CAN_PORT", "can0")
+_XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 
-
-# =============================================================================
-# Single Arm Blueprints
-# =============================================================================
 
 # Mock 7-DOF arm (for testing)
 coordinator_mock = control_coordinator(
@@ -170,10 +169,6 @@ coordinator_piper = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Dual Arm Blueprints
-# =============================================================================
 
 # Dual mock arms (7-DOF left, 6-DOF right)
 coordinator_dual_mock = control_coordinator(
@@ -301,10 +296,6 @@ coordinator_piper_xarm = control_coordinator(
 )
 
 
-# =============================================================================
-# Streaming Control Blueprints
-# =============================================================================
-
 # XArm6 teleop - streaming position control
 coordinator_teleop_xarm6 = control_coordinator(
     tick_rate=100.0,
@@ -402,11 +393,6 @@ coordinator_combined_xarm6 = control_coordinator(
 )
 
 
-# =============================================================================
-# Cartesian IK Blueprints (internal Pinocchio IK solver)
-# =============================================================================
-
-
 # Mock 6-DOF arm with CartesianIK
 coordinator_cartesian_ik_mock = control_coordinator(
     tick_rate=100.0,
@@ -474,12 +460,8 @@ coordinator_cartesian_ik_piper = control_coordinator(
 )
 
 
-# =============================================================================
-# Teleop IK Blueprints (VR teleoperation with internal Pinocchio IK)
-# =============================================================================
-
-# Single XArm6 with TeleopIK
-coordinator_teleop_xarm6 = control_coordinator(
+# Single XArm7 with TeleopIK
+coordinator_teleop_xarm7 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
@@ -487,21 +469,25 @@ coordinator_teleop_xarm6 = control_coordinator(
         HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
+            joints=make_joints("arm", 7),
             adapter_type="xarm",
             address=_ARM_IP,
             auto_enable=True,
+            gripper_joints=make_gripper_joints("arm"),
         ),
     ],
     tasks=[
         TaskConfig(
             name="teleop_xarm",
             type="teleop_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
             priority=10,
-            model_path=_XARM6_MODEL_PATH,
-            ee_joint_id=6,
+            model_path=_XARM7_MODEL_PATH,
+            ee_joint_id=7,
             hand="right",
+            gripper_joint=make_gripper_joints("arm")[0],
+            gripper_open_pos=0.85,  # xArm gripper range
+            gripper_closed_pos=0.0,
         ),
     ],
 ).transports(
@@ -604,10 +590,6 @@ coordinator_teleop_dual = control_coordinator(
 )
 
 
-# =============================================================================
-# Twist Base Blueprints (velocity-commanded platforms)
-# =============================================================================
-
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
 _base_joints = make_twist_base_joints("base")
 coordinator_mock_twist_base = control_coordinator(
@@ -634,10 +616,6 @@ coordinator_mock_twist_base = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Mobile Manipulation Blueprints (arm + twist base)
-# =============================================================================
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
 _mm_base_joints = make_twist_base_joints("base")
@@ -678,10 +656,6 @@ coordinator_mobile_manip_mock = control_coordinator(
 )
 
 
-# =============================================================================
-# Raw Blueprints (for programmatic setup)
-# =============================================================================
-
 coordinator_basic = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
@@ -692,10 +666,6 @@ coordinator_basic = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Exports
-# =============================================================================
 
 __all__ = [
     # Raw
@@ -720,6 +690,7 @@ __all__ = [
     "coordinator_teleop_dual",
     "coordinator_teleop_piper",
     "coordinator_teleop_xarm6",
+    "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
     "coordinator_xarm6",
     "coordinator_xarm7",

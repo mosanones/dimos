@@ -16,32 +16,38 @@
 """
 Quest Teleoperation Module.
 
-Receives VR controller tracking data via LCM from Deno bridge,
-transforms from WebXR to robot frame, computes deltas, and publishes PoseStamped commands.
+Receives VR controller tracking data from the Quest web app via an embedded
+FastAPI WebSocket server.  Transforms from WebXR to robot frame, computes
+deltas, and publishes PoseStamped commands.
 """
 
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-import shutil
-import signal
-import subprocess
 import threading
 import time
-from typing import Any
+from typing import Any, TypeVar
 
-from reactivex.disposable import Disposable
+from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
+from dimos_lcm.sensor_msgs import Joy as LCMJoy
+from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Joy
+from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.path_utils import get_project_root
+from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
+
+STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
 class Hand(IntEnum):
@@ -62,18 +68,22 @@ class QuestTeleopStatus:
     buttons: Buttons
 
 
-@dataclass
 class QuestTeleopConfig(ModuleConfig):
     """Configuration for Quest Teleoperation Module."""
 
     control_loop_hz: float = 50.0
+    server_port: int = 8443
 
 
-class QuestTeleopModule(Module[QuestTeleopConfig]):
+_Config = TypeVar("_Config", bound=QuestTeleopConfig)
+
+
+class QuestTeleopModule(Module[_Config]):
     """Quest Teleoperation Module for Meta Quest controllers.
 
-    Gets controller data from Deno bridge, computes output poses, and publishes them. Subclass to customize pose
-    computation, output format, and engage behavior.
+    Receives controller data from the Quest web app via an embedded WebSocket
+    server, computes output poses, and publishes them.  Subclass to customize
+    pose computation, output format, and engage behavior.
 
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
@@ -81,25 +91,15 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
         - buttons: Buttons (button states for both controllers)
     """
 
-    default_config = QuestTeleopConfig
-
-    # Inputs from Deno bridge
-    vr_left_pose: In[PoseStamped]
-    vr_right_pose: In[PoseStamped]
-    vr_left_joy: In[Joy]
-    vr_right_joy: In[Joy]
+    default_config = QuestTeleopConfig  # type: ignore[assignment]
 
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     buttons: Out[Buttons]
 
-    # -------------------------------------------------------------------------
-    # Initialization
-    # -------------------------------------------------------------------------
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # Engage state (per-hand)
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
@@ -115,36 +115,54 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
         self._control_loop_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
-        # Deno bridge server
-        self._server_process: subprocess.Popen[bytes] | None = None
-        self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
+        # Embedded web server — RobotWebInterface provides FastAPI app + run()/shutdown()
+        self._web_server = RobotWebInterface(port=self.config.server_port)
+        self._web_server_thread: threading.Thread | None = None
 
-    # -------------------------------------------------------------------------
-    # Lifecycle
-    # -------------------------------------------------------------------------
+        # Fingerprint-based message dispatch table
+        self._decoders: dict[bytes, Any] = {
+            LCMPoseStamped._get_packed_fingerprint(): self._on_pose_bytes,
+            LCMJoy._get_packed_fingerprint(): self._on_joy_bytes,
+        }
+
+        self._setup_routes()
+
+    def _setup_routes(self) -> None:
+        """Register teleop routes on the embedded web server."""
+
+        @self._web_server.app.get("/teleop", response_class=HTMLResponse)
+        async def teleop_index() -> HTMLResponse:
+            index_path = STATIC_DIR / "index.html"
+            return HTMLResponse(content=index_path.read_text())
+
+        if STATIC_DIR.is_dir():
+            self._web_server.app.mount(
+                "/static", StaticFiles(directory=str(STATIC_DIR)), name="teleop_static"
+            )
+
+        @self._web_server.app.websocket("/ws")
+        async def websocket_endpoint(ws: WebSocket) -> None:
+            await ws.accept()
+            logger.info("Quest client connected")
+            try:
+                while True:
+                    data = await ws.receive_bytes()
+                    fingerprint = data[:8]
+                    decoder = self._decoders.get(fingerprint)
+                    if decoder:
+                        decoder(data)
+                    else:
+                        logger.warning(f"Unknown message fingerprint: {fingerprint.hex()}")
+            except WebSocketDisconnect:
+                logger.info("Quest client disconnected")
+            except Exception:
+                logger.exception("WebSocket error")
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        input_streams = {
-            "vr_left_pose": (self.vr_left_pose, lambda msg: self._on_pose(Hand.LEFT, msg)),
-            "vr_right_pose": (self.vr_right_pose, lambda msg: self._on_pose(Hand.RIGHT, msg)),
-            "vr_left_joy": (self.vr_left_joy, lambda msg: self._on_joy(Hand.LEFT, msg)),
-            "vr_right_joy": (self.vr_right_joy, lambda msg: self._on_joy(Hand.RIGHT, msg)),
-        }
-        connected = []
-        for name, (stream, handler) in input_streams.items():
-            if not (stream and stream.transport):  # type: ignore[attr-defined]
-                logger.warning(f"Stream '{name}' has no transport — skipping")
-                continue
-            self._disposables.add(Disposable(stream.subscribe(handler)))  # type: ignore[attr-defined]
-            connected.append(name)
-
-        if connected:
-            logger.info(f"Subscribed to: {', '.join(connected)}")
-
         self._start_server()
+        self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
 
     @rpc
@@ -152,10 +170,6 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
         self._stop_control_loop()
         self._stop_server()
         super().stop()
-
-    # -------------------------------------------------------------------------
-    # Internal engage/disengage (assumes lock is held)
-    # -------------------------------------------------------------------------
 
     def _engage(self, hand: Hand | None = None) -> bool:
         """Engage a hand. Assumes self._lock is held."""
@@ -189,84 +203,58 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
                 buttons=Buttons.from_controllers(left, right),
             )
 
-    # -------------------------------------------------------------------------
-    # Callbacks and Control Loop
-    # -------------------------------------------------------------------------
+    @staticmethod
+    def _resolve_hand(frame_id: str) -> Hand:
+        if frame_id == "left":
+            return Hand.LEFT
+        elif frame_id == "right":
+            return Hand.RIGHT
+        raise ValueError(f"Unexpected frame_id: {frame_id!r}, expected 'left' or 'right'")
 
-    def _on_pose(self, hand: Hand, pose_stamped: PoseStamped) -> None:
-        """Callback for controller pose, converting WebXR to robot frame."""
-        is_left = hand == Hand.LEFT
-        robot_pose_stamped = webxr_to_robot(pose_stamped, is_left_controller=is_left)
+    def _on_pose_bytes(self, data: bytes) -> None:
+        """Decode LCM bytes into PoseStamped, transform to robot frame."""
+        msg = PoseStamped.lcm_decode(data)
+        hand = self._resolve_hand(msg.frame_id)
+        robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
-            self._current_poses[hand] = robot_pose_stamped
+            self._current_poses[hand] = robot_pose
 
-    def _on_joy(self, hand: Hand, joy: Joy) -> None:
-        """Callback for Joy message, parsing into QuestControllerState."""
-        is_left = hand == Hand.LEFT
+    def _on_joy_bytes(self, data: bytes) -> None:
+        """Decode LCM bytes into Joy, parse into QuestControllerState."""
+        msg = Joy.lcm_decode(data)
+        hand = Hand.LEFT if msg.frame_id == "left" else Hand.RIGHT
         try:
-            controller = QuestControllerState.from_joy(joy, is_left=is_left)
+            controller = QuestControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
-                f"Malformed Joy for {hand.name}: axes={len(joy.axes or [])}, buttons={len(joy.buttons or [])}"
+                f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
             )
             return
         with self._lock:
             self._controllers[hand] = controller
 
-    # -------------------------------------------------------------------------
-    # Deno Bridge Server
-    # -------------------------------------------------------------------------
-
     def _start_server(self) -> None:
-        """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
-        if self._server_process is not None and self._server_process.poll() is None:
-            logger.warning("Deno bridge already running", pid=self._server_process.pid)
+        """Start the embedded FastAPI server with HTTPS in a daemon thread."""
+        if self._web_server_thread is not None and self._web_server_thread.is_alive():
+            logger.warning("Web server already running")
             return
 
-        if shutil.which("deno") is None:
-            logger.error(
-                "Deno is not installed. Install it with: curl -fsSL https://deno.land/install.sh | sh"
-            )
-            return
-
-        script = str(self._server_script)
-        cmd = [
-            "deno",
-            "run",
-            "--allow-net",
-            "--allow-read",
-            "--allow-run",
-            "--allow-write",
-            "--unstable-net",
-            script,
-        ]
-        try:
-            self._server_process = subprocess.Popen(cmd)
-            logger.info(f"Deno bridge server started (pid {self._server_process.pid})")
-        except OSError as e:
-            logger.error(f"Failed to start Deno bridge: {e}")
+        self._web_server_thread = threading.Thread(
+            target=self._web_server.run,
+            kwargs={"ssl": True, "ssl_certs_dir": get_project_root() / "assets" / "teleop_certs"},
+            daemon=True,
+            name="QuestTeleopWebServer",
+        )
+        self._web_server_thread.start()
+        logger.info(f"Quest teleop web server started on https://0.0.0.0:{self.config.server_port}")
 
     def _stop_server(self) -> None:
-        """Terminate the Deno bridge server subprocess."""
-        if self._server_process is None or self._server_process.poll() is not None:
-            self._server_process = None
-            return
-
-        logger.info("Stopping Deno bridge server", pid=self._server_process.pid)
-        self._server_process.send_signal(signal.SIGTERM)
-        try:
-            self._server_process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "Deno bridge did not exit, sending SIGKILL", pid=self._server_process.pid
-            )
-            self._server_process.kill()
-            try:
-                self._server_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                logger.error("Deno bridge did not exit after SIGKILL")
-        logger.info("Deno bridge server stopped")
-        self._server_process = None
+        """Shutdown the embedded web server."""
+        self._web_server.shutdown()
+        if self._web_server_thread is not None:
+            self._web_server_thread.join(timeout=3)
+            self._web_server_thread = None
+        logger.info("Quest teleop web server stopped")
 
     def _start_control_loop(self) -> None:
         """Start the control loop thread."""
@@ -322,10 +310,6 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
             sleep_time = period - elapsed
             if sleep_time > 0:
                 self._stop_event.wait(sleep_time)
-
-    # -------------------------------------------------------------------------
-    # Control Loop Internals
-    # -------------------------------------------------------------------------
 
     def _handle_engage(self) -> None:
         """Check for engage button press and update per-hand engage state.

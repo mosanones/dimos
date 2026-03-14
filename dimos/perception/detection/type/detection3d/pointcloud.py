@@ -33,8 +33,10 @@ from lcm_msgs.geometry_msgs import (  # type: ignore[import-not-found]
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     PointCloudFilter,
@@ -74,15 +76,15 @@ class Detection3DPC(Detection3D):
 
     def get_bounding_box(self):  # type: ignore[no-untyped-def]
         """Get axis-aligned bounding box of the detection's pointcloud."""
-        return self.pointcloud.get_axis_aligned_bounding_box()
+        return self.pointcloud.axis_aligned_bounding_box
 
     def get_oriented_bounding_box(self):  # type: ignore[no-untyped-def]
         """Get oriented bounding box of the detection's pointcloud."""
-        return self.pointcloud.get_oriented_bounding_box()
+        return self.pointcloud.oriented_bounding_box
 
     def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of the detection's bounding box."""
-        return self.pointcloud.get_bounding_box_dimensions()
+        return self.pointcloud.bounding_box_dimensions
 
     def bounding_box_intersects(self, other: Detection3DPC) -> bool:
         """Check if this detection's bounding box intersects with another's."""

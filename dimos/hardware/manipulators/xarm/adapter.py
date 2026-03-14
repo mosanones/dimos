@@ -62,10 +62,7 @@ class XArmAdapter(ManipulatorAdapter):
         self._dof = dof
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
-
-    # =========================================================================
-    # Connection
-    # =========================================================================
+        self._gripper_enabled: bool = False
 
     def connect(self) -> bool:
         """Connect to XArm via TCP/IP."""
@@ -97,10 +94,6 @@ class XArmAdapter(ManipulatorAdapter):
         """Check if connected to XArm."""
         return self._arm is not None and self._arm.connected
 
-    # =========================================================================
-    # Info
-    # =========================================================================
-
     def get_info(self) -> ManipulatorInfo:
         """Get XArm information."""
         return ManipulatorInfo(
@@ -122,10 +115,6 @@ class XArmAdapter(ManipulatorAdapter):
             position_upper=[limit] * self._dof,
             velocity_max=[math.pi] * self._dof,  # ~180 deg/s
         )
-
-    # =========================================================================
-    # Control Mode
-    # =========================================================================
 
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set XArm control mode.
@@ -159,10 +148,6 @@ class XArmAdapter(ManipulatorAdapter):
     def get_control_mode(self) -> ControlMode:
         """Get current control mode."""
         return self._control_mode
-
-    # =========================================================================
-    # State Reading
-    # =========================================================================
 
     def read_joint_positions(self) -> list[float]:
         """Read joint positions (degrees -> radians)."""
@@ -213,10 +198,6 @@ class XArmAdapter(ManipulatorAdapter):
             return 0, ""
         return code, f"XArm error {code}"
 
-    # =========================================================================
-    # Motion Control (Joint Space)
-    # =========================================================================
-
     def write_joint_positions(
         self,
         positions: list[float],
@@ -262,10 +243,6 @@ class XArmAdapter(ManipulatorAdapter):
         code: int = self._arm.emergency_stop()
         return code == 0
 
-    # =========================================================================
-    # Servo Control
-    # =========================================================================
-
     def write_enable(self, enable: bool) -> bool:
         """Enable or disable servos."""
         if not self._arm:
@@ -287,10 +264,6 @@ class XArmAdapter(ManipulatorAdapter):
             return False
         code: int = self._arm.clean_error()
         return code == 0
-
-    # =========================================================================
-    # Cartesian Control (Optional)
-    # =========================================================================
 
     def read_cartesian_position(self) -> dict[str, float] | None:
         """Read end-effector pose (mm -> meters, degrees -> radians)."""
@@ -330,10 +303,6 @@ class XArmAdapter(ManipulatorAdapter):
         )
         return code == 0
 
-    # =========================================================================
-    # Gripper (Optional)
-    # =========================================================================
-
     def read_gripper_position(self) -> float | None:
         """Read gripper position (mm -> meters)."""
         if not self._arm:
@@ -351,14 +320,12 @@ class XArmAdapter(ManipulatorAdapter):
         if not self._arm:
             return False
 
-        self._arm.set_gripper_enable(True)
+        if not self._gripper_enabled:
+            self._arm.set_gripper_enable(True)
+            self._gripper_enabled = True
         pos_mm = position * M_TO_MM
-        code: int = self._arm.set_gripper_position(pos_mm, wait=True)
+        code: int = self._arm.set_gripper_position(pos_mm, wait=False)
         return code == 0
-
-    # =========================================================================
-    # Force/Torque Sensor (Optional)
-    # =========================================================================
 
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data if available."""

@@ -26,13 +26,12 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
-
-# =============================================================================
-# Fixtures
-# =============================================================================
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @pytest.fixture
@@ -100,13 +99,7 @@ def _make_module():
         module._planner = None
         module._kinematics = None
         module._coordinator_client = None
-        module._graspgen = None
         return module
-
-
-# =============================================================================
-# Test State Machine
-# =============================================================================
 
 
 class TestStateMachine:
@@ -129,12 +122,14 @@ class TestStateMachine:
 
         module._state = ManipulationState.FAULT
         module._error_message = "Error"
-        assert module.reset() is True
+        result = module.reset()
+        assert "IDLE" in result
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
 
         module._state = ManipulationState.EXECUTING
-        assert module.reset() is False
+        result = module.reset()
+        assert "Error" in result
 
     def test_fail_sets_fault_state(self):
         """_fail helper sets FAULT state and message."""
@@ -166,11 +161,6 @@ class TestStateMachine:
         assert module._begin_planning() is None
 
 
-# =============================================================================
-# Test Robot Selection
-# =============================================================================
-
-
 class TestRobotSelection:
     """Test robot selection logic."""
 
@@ -200,11 +190,6 @@ class TestRobotSelection:
         assert result[0] == "left"
 
 
-# =============================================================================
-# Test Joint Name Translation (for coordinator integration)
-# =============================================================================
-
-
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""
 
@@ -224,11 +209,6 @@ class TestJointNameTranslation:
         )
         assert result.joint_names == ["left_joint1", "left_joint2", "left_joint3"]
         assert len(result.points) == 2  # Points preserved
-
-
-# =============================================================================
-# Test Execute Method
-# =============================================================================
 
 
 class TestExecute:
@@ -285,11 +265,6 @@ class TestExecute:
 
         assert module.execute() is False
         assert module._state == ManipulationState.FAULT
-
-
-# =============================================================================
-# Test RobotModelConfig Mapping Helpers
-# =============================================================================
 
 
 class TestRobotModelConfigMapping:
