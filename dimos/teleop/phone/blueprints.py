@@ -36,4 +36,4 @@ teleop_phone_go2_fleet = autoconnect(
 )
 
 
-__all__ = ["teleop_phone_go2_fleet", "teleop_phone_go2", "teleop_phone"]
+__all__ = ["teleop_phone", "teleop_phone_go2", "teleop_phone_go2_fleet"]
