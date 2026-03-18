@@ -40,6 +40,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import JointState
 from dimos.robot.unitree.keyboard_teleop import keyboard_teleop
+from dimos.utils.data import get_data
 
 _go2_joints = make_quadruped_joints("go2")
 
@@ -61,8 +62,7 @@ _go2 = control_coordinator(
             type="rl_policy",
             joint_names=_go2_joints,
             priority=50,
-            policy_path="unitree_rl_lab/logs/rsl_rl/unitree_go2_velocity/"
-            "2026-03-17_16-18-21/exported/policy.onnx",
+            policy_path=str(get_data("mujoco_sim") / "unitree_go2_policy.onnx"),
             hardware_id="go2",
             default_positions=[
                 0.1,
