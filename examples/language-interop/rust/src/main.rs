@@ -1,10 +1,8 @@
 // Rust robot control example
 // Subscribes to robot pose and publishes twist commands via LCM
 
-mod lcm_transport;
-
+use dimos_lcm::Lcm;
 use lcm_msgs::geometry_msgs::{PoseStamped, Twist, Vector3};
-use lcm_transport::LcmUdp;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -13,7 +11,7 @@ const CMD_VEL_CHANNEL: &str = "/cmd_vel#geometry_msgs.Twist";
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(100); // 10 Hz
 
 fn main() {
-    let lcm = LcmUdp::new().expect("Failed to create LCM socket");
+    let lcm = Lcm::new().expect("Failed to create LCM transport");
 
     println!("Robot control started");
     println!("Subscribing to /odom, publishing to /cmd_vel");
