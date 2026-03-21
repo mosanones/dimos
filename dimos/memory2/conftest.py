@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -74,7 +74,7 @@ def session(request: pytest.FixtureRequest) -> Store:
     Named 'session' to minimize test changes — tests use session.stream() which
     now goes directly to Store.stream().
     """
-    return request.getfixturevalue(request.param)
+    return cast("Store", request.getfixturevalue(request.param))
 
 
 @pytest.fixture
@@ -92,4 +92,4 @@ def sqlite_blob_store() -> Iterator[SqliteBlobStore]:
 
 @pytest.fixture(params=["file_blob_store", "sqlite_blob_store"])
 def blob_store(request: pytest.FixtureRequest) -> BlobStore:
-    return request.getfixturevalue(request.param)
+    return cast("BlobStore", request.getfixturevalue(request.param))

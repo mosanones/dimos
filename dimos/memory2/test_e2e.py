@@ -275,7 +275,7 @@ class TestEmbedImages:
 
         # Downsample to 1Hz, then embed
         pipeline = (
-            video.transform(QualityWindow(lambda img: 1.0, window=1.0))
+            video.transform(QualityWindow(lambda img: img.sharpness, window=1.0))
             .transform(EmbedImages(clip))
             .save(embedded)
         )

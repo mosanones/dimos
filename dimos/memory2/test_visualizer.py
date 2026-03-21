@@ -21,7 +21,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.transform import QualityWindow
 from dimos.models.embedding.clip import CLIPModel
+from dimos.models.vl.florence import Florence2Model
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data_dir
 
@@ -74,6 +76,7 @@ class TestVisualizer:
         print(f"ts={obs.ts}, pose={obs.pose}, image={obs.data}")
 
     # we search for 10 images matching "a door"
+    #
     # VIS GOAL: draw each image in 3d space in the position of capture
     # potentially also draw them in a grid with similarity scores, or something like that
     def test_search_by_text(self, store: SqliteStore, clip: CLIPModel) -> None:
@@ -86,6 +89,7 @@ class TestVisualizer:
             print(obs.pose)  # pose
 
     # we search for all images near some global location
+    #
     # VIS GOAL: many images, draw just poses for each
     def test_search_near_pose(self, store: SqliteStore) -> None:
         """Find images near a pose within a time window."""
@@ -97,6 +101,7 @@ class TestVisualizer:
             print(lidar.at(obs.ts).first().data)  # get a related lidar frame (can try and draw)
 
     # we semantically search, then detect with a detection model
+    #
     # VIS GOAL: draw 2d detections somehow, or project into 3d, draw 3d bounding boxes
     def test_detect_objects(self, store: SqliteStore, clip: CLIPModel) -> None:
         """CLIP pre-filter + VLM detection on top candidates."""
@@ -117,7 +122,22 @@ class TestVisualizer:
                 )  # get a related lidar frame (can try and project)
 
     # draw the path robot took
+    #
     # VIS GOAL: I should be able to draw these poses individually or as a path
     def test_search_reconstruct_full_path(self, store: SqliteStore) -> None:
         for obs in store.streams.color_image_embedded:
             assert obs.pose is not None
+
+    # we can also generate textxual descriptions of images returned from queries
+    # or in real time as robot runs
+    #
+    # VIS GOAL: how dow e want to draw those?
+    def test_agent_visual_description_passive(self, store: SqliteStore) -> None:
+        florence = Florence2Model()
+        with florence:
+            pipeline = store.streams.color_image.transform(
+                QualityWindow(lambda img: img.sharpness, window=5.0)
+            ).map(lambda obs: obs.derive(data=florence.caption(obs.data)))
+
+            for obs in pipeline:
+                print(obs.ts, obs.data)
