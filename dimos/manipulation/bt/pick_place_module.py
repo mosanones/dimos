@@ -32,7 +32,7 @@ from dimos.manipulation.bt.trees import build_go_home_tree, build_pick_tree, bui
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 logger = setup_logger()
 
@@ -235,7 +235,7 @@ class PickPlaceModule(Module):
         """Run a BT tick loop until SUCCESS, FAILURE, timeout, or stop."""
         # Reset blackboard to prevent stale data from a previous run
         bb = py_trees.blackboard.Client(name="TreeReset")
-        for key, default in {
+        defaults: dict[str, Any] = {
             "detections": [],
             "target_object": None,
             "object_pointcloud": None,
@@ -251,7 +251,8 @@ class PickPlaceModule(Module):
             "has_object": False,
             "error_message": "",
             "result_message": "",
-        }.items():
+        }
+        for key, default in defaults.items():
             bb.register_key(key=key, access=py_trees.common.Access.WRITE)
             setattr(bb, key, default)
 
@@ -430,12 +431,12 @@ class PickPlaceModule(Module):
         return "\n".join(lines)
 
     @skill
-    def stop(self) -> str:
+    def stop(self) -> None:
         """Emergency stop — cancel all motion and open gripper. Safe to call at any time."""
         if self._lock.locked():
             self._stop_event.set()
             logger.warning("[PickPlaceModule] Stop requested — halting BT")
-            return "Stop signal sent — operation will halt on next tick"
+            return
 
         try:
             self.get_rpc_calls("BTManipulationModule.cancel")()
@@ -447,4 +448,3 @@ class PickPlaceModule(Module):
             )
         except Exception:
             pass
-        return "Robot stopped — no operation was running"

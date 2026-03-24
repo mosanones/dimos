@@ -30,7 +30,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.manipulation.bt.pick_place_module import PickPlaceModule
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 

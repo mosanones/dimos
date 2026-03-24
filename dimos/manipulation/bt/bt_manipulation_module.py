@@ -36,7 +36,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.perception.detection.type.detection3d.object import (
     Object as DetObject,
 )
@@ -44,8 +44,8 @@ from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseArray
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -237,7 +237,8 @@ class BTManipulationModule(ManipulationModule):
         from dimos.manipulation.grasping import visualize_grasps as viz_grasps
         from dimos.msgs.geometry_msgs.Transform import Transform
 
-        meshcat = self._world_monitor.world._meshcat
+        assert self._world_monitor is not None, "WorldMonitor is not initialized"
+        meshcat = self._world_monitor.world._meshcat  # type: ignore[attr-defined]
 
         W = viz_grasps.GRIPPER_WIDTH / 2.0
         FL = viz_grasps.FINGER_LENGTH

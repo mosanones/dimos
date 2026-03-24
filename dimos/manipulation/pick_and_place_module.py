@@ -254,7 +254,8 @@ class PickAndPlaceModule(ManipulationModule):
         import dimos.manipulation.grasping.visualize_grasps as viz_grasps
         from dimos.msgs.geometry_msgs.Transform import Transform
 
-        meshcat = self._world_monitor.world._meshcat
+        assert self._world_monitor is not None, "WorldMonitor is not initialized"
+        meshcat = self._world_monitor.world._meshcat  # type: ignore[attr-defined]
 
         W = viz_grasps.GRIPPER_WIDTH / 2.0
         FL = viz_grasps.FINGER_LENGTH

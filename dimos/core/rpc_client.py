@@ -62,7 +62,7 @@ class RpcCall:
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (list(args), kwargs))  # type: ignore[arg-type]
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
@@ -70,8 +70,8 @@ class RpcCall:
         timeout = kwargs.pop("rpc_timeout", None)
         sync_args: dict[str, float] = {"rpc_timeout": timeout} if timeout is not None else {}
         result, unsub_fn = self._rpc.call_sync(
-            f"{self._remote_name}/{self._name}", (args, kwargs), **sync_args
-        )  # type: ignore[arg-type]
+            f"{self._remote_name}/{self._name}", (list(args), kwargs), **sync_args
+        )
         self._unsub_fns.append(unsub_fn)
         return result
 
