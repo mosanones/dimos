@@ -72,8 +72,8 @@ class StreamModule(Module[ModuleConfigT]):
         unsub = inp_port.subscribe(lambda msg: stream.append(msg))
         self._disposables.add(Disposable(unsub))
 
-        live = stream.live()
-        bound = self._apply_pipeline(live)
+        self._live = stream.live()
+        bound = self._apply_pipeline(self._live)
         self._disposables.add(bound.publish(out_port))
 
     def _apply_pipeline(self, stream: Stream[Any]) -> Stream[Any]:
@@ -88,8 +88,12 @@ class StreamModule(Module[ModuleConfigT]):
             )
 
         # Method pipeline: self.pipeline(stream) -> stream
-        if inspect.isfunction(pipeline) or inspect.ismethod(pipeline):
-            result: Stream[Any] = pipeline(self, stream)
+        if inspect.isfunction(pipeline):
+            result = pipeline(self, stream)
+            if not isinstance(result, Stream):
+                raise TypeError(
+                    f"{self.__class__.__name__}.pipeline() must return a Stream, got {type(result).__name__}"
+                )
             return result
 
         # Static class attr: Stream (unbound chain) or Transformer
@@ -99,6 +103,9 @@ class StreamModule(Module[ModuleConfigT]):
 
     @rpc
     def stop(self) -> None:
+        # Close the live buffer so the pipeline iterator thread unblocks
+        if hasattr(self, "_live"):
+            self._live.stop()
         super().stop()
         self._store.stop()
 

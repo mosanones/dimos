@@ -393,6 +393,13 @@ class Stream(Resource, Generic[T]):
         if not found_root:
             raise TypeError("Can only chain an unbound stream (created with Stream())")
 
+        # Validate no unsupported query fields in the unbound chain
+        for _, query in ops:
+            if query.search_vec is not None or query.search_text is not None:
+                raise TypeError("search() / search_text() cannot be used on unbound streams")
+            if query.live_buffer is not None:
+                raise TypeError("live() cannot be used on unbound streams")
+
         result: Stream[Any] = self
         for xf, query in reversed(ops):
             if xf is not None:

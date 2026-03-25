@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.mapping.voxels import VoxelMap
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import Batch, QualityWindow
-from dimos.memory2.voxel_map import VoxelMap
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.vl.florence import Florence2Model
 from dimos.msgs.sensor_msgs.Image import Image

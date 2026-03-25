@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from dimos.mapping.voxels import VoxelMap
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.type.observation import Observation
-from dimos.memory2.voxel_map import VoxelMap
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data_dir
 

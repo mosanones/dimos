@@ -18,6 +18,8 @@ from collections.abc import Iterator
 
 import pytest
 
+from dimos.core.stream import In, Out
+from dimos.memory2.module import StreamModule
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import FnTransformer, Transformer
@@ -141,8 +143,6 @@ def test_unbound_str() -> None:
 
 def test_stream_module_subclass_blueprint() -> None:
     """StreamModule subclass creates a Blueprint with correct In/Out ports."""
-    from dimos.core.stream import In, Out
-    from dimos.memory2.module import StreamModule
 
     class Identity(Transformer[str, str]):
         def __call__(self, upstream: Iterator[Observation[str]]) -> Iterator[Observation[str]]:
@@ -164,8 +164,6 @@ def test_stream_module_subclass_blueprint() -> None:
 
 def test_stream_module_with_transformer_pipeline() -> None:
     """StreamModule accepts a bare Transformer as pipeline."""
-    from dimos.core.stream import In, Out
-    from dimos.memory2.module import StreamModule
 
     class Double(Transformer[int, int]):
         def __call__(self, upstream: Iterator[Observation[int]]) -> Iterator[Observation[int]]:
@@ -189,8 +187,6 @@ def test_stream_module_with_transformer_pipeline() -> None:
 def test_stream_module_with_method_pipeline() -> None:
     """StreamModule accepts a method pipeline with access to self.config."""
     from dimos.core.module import ModuleConfig
-    from dimos.core.stream import In, Out
-    from dimos.memory2.module import StreamModule
 
     class MyConfig(ModuleConfig):
         factor: int = 3
@@ -219,3 +215,51 @@ def test_stream_module_with_method_pipeline() -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "result" in stream_names
+
+
+def test_stream_module_runtime_wiring() -> None:
+    """End-to-end: push data into In port, assert transformed data on Out port."""
+    import threading
+
+    from dimos.core.transport import pLCMTransport
+
+    class Double(Transformer[int, int]):
+        def __call__(self, upstream: Iterator[Observation[int]]) -> Iterator[Observation[int]]:
+            for obs in upstream:
+                yield obs.derive(data=obs.data * 2)
+
+    class Doubler(StreamModule):
+        pipeline = Stream().transform(Double())
+        numbers: In[int]
+        doubled: Out[int]
+
+    module = Doubler()
+    module.numbers.transport = pLCMTransport("/test/numbers")
+    module.doubled.transport = pLCMTransport("/test/doubled")
+
+    received: list[int] = []
+    done = threading.Event()
+
+    # Subscribe before start so we don't miss the first message
+    unsub = module.doubled.subscribe(lambda msg: (received.append(msg), done.set()))
+
+    module.start()
+
+    import time
+
+    time.sleep(0.5)  # let live stream iterator spin up
+
+    # Push data through the In port's transport
+    module.numbers.transport.publish(42)
+
+    assert done.wait(timeout=5.0), f"Timed out, received={received}"
+
+    unsub()
+    module.stop()
+
+    # Shutdown the global RxPY thread pool so conftest thread-leak check passes
+    from dimos.utils.threadpool import get_scheduler
+
+    get_scheduler().executor.shutdown(wait=True)
+
+    assert received == [84]
