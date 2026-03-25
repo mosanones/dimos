@@ -113,6 +113,10 @@ def test_process_crash_triggers_stop() -> None:
     # stop() is idempotent
     mod.stop()
 
+    # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
+    # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
+    time.sleep(0.5)
+
 
 @pytest.mark.slow
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:

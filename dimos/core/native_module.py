@@ -140,7 +140,11 @@ class NativeModule(Module[_NativeConfig]):
             module=self,
             args=[
                 self.config.executable,
-                *[arg for name, topic in self._collect_topics().items() for arg in (f"--{name}", topic)],
+                *[
+                    arg
+                    for name, topic in self._collect_topics().items()
+                    for arg in (f"--{name}", topic)
+                ],
                 *self.config.to_cli_args(),
                 *self.config.extra_args,
             ],
@@ -191,12 +195,16 @@ class NativeModule(Module[_NativeConfig]):
             if line.strip():
                 logger.warning(line)
         if proc.returncode != 0:
+            stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-1000:]
             raise RuntimeError(
-                f"Build command failed (exit {proc.returncode}): {self.config.build_command}"
+                f"Build command failed (exit {proc.returncode}): {self.config.build_command}\n"
+                f"stderr: {stderr_tail}"
             )
         if not exe.exists():
             raise FileNotFoundError(
-                f"Build command succeeded but executable still not found: {exe}"
+                f"Build command succeeded but executable still not found: {exe}\n"
+                f"Build output may have been written to a different path. "
+                f"Check that build_command produces the executable at the expected location."
             )
 
     def _collect_topics(self) -> dict[str, str]:
