@@ -348,22 +348,30 @@ class ShmSubset:
         self._shm_instances.clear()
 
     def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
-        for topic_name, capacity, encoding in self._topic_specs:
-            if encoding == "pickle":
-                shm: SharedMemoryPubSubBase = PickleSharedMemory(default_capacity=capacity)
-            elif encoding == "bytes":
-                shm = BytesSharedMemory(default_capacity=capacity)
-            else:
-                logger.error(f"ShmSubset: unknown encoding '{encoding}', skipping topic '{topic_name}'")
-                continue
-            shm.start()
-            self._shm_instances.append(shm)
+        try:
+            for topic_name, capacity, encoding in self._topic_specs:
+                if encoding == "pickle":
+                    shm: SharedMemoryPubSubBase = PickleSharedMemory(default_capacity=capacity)
+                elif encoding == "bytes":
+                    shm = BytesSharedMemory(default_capacity=capacity)
+                else:
+                    logger.error(
+                        f"ShmSubset: unknown encoding '{encoding}', skipping topic '{topic_name}'"
+                    )
+                    continue
+                shm.start()
+                self._shm_instances.append(shm)
 
-            def _cb(msg: Any, _topic: Any, _tn: str = topic_name) -> None:
-                callback(msg, _tn)
+                def _cb(msg: Any, _topic: Any, _tn: str = topic_name) -> None:
+                    callback(msg, _tn)
 
-            unsub = shm.subscribe(topic_name, _cb)
-            self._unsubs.append(unsub)
+                unsub = shm.subscribe(topic_name, _cb)
+                self._unsubs.append(unsub)
+        except Exception:
+            # If a later topic fails (e.g. bad capacity, SHM allocation error),
+            # clean up SHM instances already started for earlier topics.
+            self.stop()
+            raise
 
         def unsubscribe_all() -> None:
             self.stop()
