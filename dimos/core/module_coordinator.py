@@ -75,6 +75,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             self._wire_streams(spec.stream_wiring)
             self._wire_rpc_methods(spec.rpc_wiring)
             self._wire_module_refs(spec.module_ref_wiring)
+            self._wire_disabled_ref_proxies(spec.disabled_ref_proxies)
             self._build_all_modules()
             self.start_all_modules()
 
@@ -188,6 +189,13 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             target_proxy = self.get_instance(w.target_module)
             setattr(base_proxy, w.ref_name, target_proxy)
             base_proxy.set_module_ref(w.ref_name, target_proxy)  # type: ignore[union-attr]
+
+    def _wire_disabled_ref_proxies(self, proxies: dict[tuple[type[ModuleBase], str], Any]) -> None:
+        """Wire up no-op proxies for refs whose providers were disabled."""
+        for (base_module, module_ref_name), proxy in proxies.items():
+            base_module_proxy = self.get_instance(base_module)
+            setattr(base_module_proxy, module_ref_name, proxy)
+            base_module_proxy.set_module_ref(module_ref_name, proxy)  # type: ignore[union-attr]
 
     def _build_all_modules(self) -> None:
         """Call build() on all deployed modules in parallel.

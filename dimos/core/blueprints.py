@@ -42,6 +42,30 @@ else:
 logger = setup_logger()
 
 
+class _DisabledModuleProxy:
+    def __init__(self, spec_name: str) -> None:
+        object.__setattr__(self, "_spec_name", spec_name)
+
+    def __getattr__(self, name: str) -> Any:
+        spec = object.__getattribute__(self, "_spec_name")
+
+        def _noop(*_args: Any, **_kwargs: Any) -> None:
+            logger.warning(
+                "Called on disabled module (no-op)",
+                method=name,
+                spec=spec,
+            )
+            return None
+
+        return _noop
+
+    def __reduce__(self) -> tuple[type, tuple[str]]:
+        return (_DisabledModuleProxy, (self._spec_name,))
+
+    def __repr__(self) -> str:
+        return f"<DisabledModuleProxy spec={self._spec_name}>"
+
+
 @dataclass(frozen=True)
 class StreamRef:
     name: str
@@ -53,6 +77,7 @@ class StreamRef:
 class ModuleRef:
     name: str
     spec: type[Spec] | type[ModuleBase]
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +118,7 @@ class DeploySpec:
     stream_wiring: list[StreamWiring]
     rpc_wiring: RpcWiringPlan
     module_ref_wiring: list[ModuleRefWiring]
+    disabled_ref_proxies: dict[tuple[type[ModuleBase], str], _DisabledModuleProxy] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -356,6 +382,8 @@ class Blueprint:
     def _compile_module_ref_wiring(self) -> list[ModuleRefWiring]:
         """Resolve module references and return wiring plan (pure — no side effects)."""
         mod_and_mod_ref_to_target: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
+        disabled_ref_proxies: dict[tuple[type[ModuleBase], str], _DisabledModuleProxy] = {}
+        disabled_set = set(self.disabled_modules_tuple)
 
         # Seed with explicit remappings that point to modules/specs
         for (module, name), replacement in self.remapping_map.items():
@@ -388,6 +416,31 @@ class Blueprint:
                 ]
 
                 if len(possible_module_candidates) == 0:
+                    if each_module_ref.optional:
+                        continue
+                    # Check whether a *disabled* module would have satisfied this ref.
+                    disabled_candidate = next(
+                        (
+                            bp.module
+                            for bp in self.blueprints
+                            if bp.module in disabled_set
+                            and spec_structural_compliance(bp.module, spec)
+                        ),
+                        None,
+                    )
+                    if disabled_candidate is not None:
+                        logger.warning(
+                            "Module ref unsatisfied because provider is disabled; "
+                            "installing no-op proxy",
+                            ref=each_module_ref.name,
+                            consumer=blueprint.module.__name__,
+                            disabled_provider=disabled_candidate.__name__,
+                            spec=each_module_ref.spec.__name__,
+                        )
+                        disabled_ref_proxies[blueprint.module, each_module_ref.name] = (
+                            _DisabledModuleProxy(each_module_ref.spec.__name__)
+                        )
+                        continue
                     raise Exception(
                         f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I couldn't find a module that met that spec.\n"""
                     )
@@ -411,10 +464,11 @@ class Blueprint:
                 else:
                     mod_and_mod_ref_to_target[key] = valid_module_candidates[0]
 
-        return [
+        wiring = [
             ModuleRefWiring(base_module=base_module, ref_name=ref_name, target_module=target)
             for (base_module, ref_name), target in mod_and_mod_ref_to_target.items()
         ]
+        return wiring, disabled_ref_proxies
 
     def _compile_rpc_wiring(self) -> RpcWiringPlan:
         """Compile the RPC method registry and binding requests (pure — no side effects)."""
@@ -503,11 +557,13 @@ class Blueprint:
         self._verify_no_name_conflicts()
 
         # Phase 3: Compile deploy spec (pure — no side effects)
+        module_ref_wiring, disabled_ref_proxies = self._compile_module_ref_wiring()
         deploy_spec = DeploySpec(
             module_specs=self._compile_module_specs(global_config),
             stream_wiring=self._compile_stream_wiring(),
-            module_ref_wiring=self._compile_module_ref_wiring(),
+            module_ref_wiring=module_ref_wiring,
             rpc_wiring=self._compile_rpc_wiring(),
+            disabled_ref_proxies=disabled_ref_proxies,
         )
 
         # Phase 4: Execute (all mutations go through coordinator)
