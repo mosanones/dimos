@@ -30,18 +30,19 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-_MODULE_DIR = str(Path(__file__).resolve().parent)
-
-
 class FarPlannerConfig(NativeModuleConfig):
     """Config for the FAR planner native module."""
 
-    cwd: str | None = _MODULE_DIR
+    cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/far_planner"
-    build_command: str | None = "nix build ./repo --no-write-lock-file"
-    rebuild_on_change: list[str] | None = [  # type: ignore[assignment]
-        str(Path(_MODULE_DIR) / "repo" / "main.cpp"),
-    ]
+    build_command: str | None = (
+        "nix build github:dimensionalOS/dimos-module-far-planner/v0.2.0 --no-write-lock-file"
+    )
+    # TODO: remove below after finish testing
+    # build_command: str | None = "nix build ./repo --no-write-lock-file"
+    # rebuild_on_change: list[str] | None = [  # type: ignore[assignment]
+        # "repo/main.cpp",
+    # ]
 
     # C++ binary uses snake_case CLI args.
     cli_name_override: dict[str, str] = {
