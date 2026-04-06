@@ -143,6 +143,7 @@ def did_change(
     cache_name: str,
     paths: Sequence[PathEntry],
     cwd: str | Path | None = None,
+    extra_hash: str | None = None,
 ) -> bool:
     """Check if any files/dirs matching the given paths have changed since last check.
 
@@ -174,6 +175,17 @@ def did_change(
         # Relative path without cwd → ValueError
         did_change("bad", ["src/main.cpp"])  # raises ValueError
 
+        # Include extra context (e.g. build command) in the hash
+        did_change("my_build", ["/src/main.cpp"], extra_hash="nix build .#foo")
+
+    Args:
+        cache_name: Stable key for the cache file.
+        paths: Files/dirs/globs to hash.
+        cwd: Working directory for resolving relative paths.
+        extra_hash: Optional extra string folded into the hash (e.g. a build
+            command), so changes to it trigger a rebuild even if source files
+            are unchanged.
+
     Returns ``True`` on the first call (no previous cache), and on subsequent
     calls returns ``True`` only if file contents differ from the last check.
     The cache is always updated, so two consecutive calls with no changes
@@ -192,6 +204,11 @@ def did_change(
         return False
 
     current_hash = _hash_files(files)
+    if extra_hash:
+        h = xxhash.xxh64()
+        h.update(current_hash.encode())
+        h.update(extra_hash.encode())
+        current_hash = h.hexdigest()
 
     cache_dir = _get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)

@@ -114,6 +114,30 @@ def test_no_change_skips_rebuild(build_env: dict[str, Path]) -> None:
         mod.stop()
 
 
+def test_rebuild_when_build_command_changes(build_env: dict[str, Path]) -> None:
+    """Changing build_command (e.g. nix tag bump) should trigger a rebuild."""
+    mod = _make_module(build_env)
+    try:
+        exe = build_env["exe"]
+        marker = build_env["marker"]
+
+        # Initial build
+        mod._maybe_build()
+        assert exe.exists()
+        marker.unlink()
+
+        # No change → skip
+        mod._maybe_build()
+        assert not marker.exists()
+
+        # Change build_command (simulates a nix tag bump)
+        mod.config.build_command = f"sh {build_env['build_script']}  # v0.2.0"
+        mod._maybe_build()
+        assert marker.exists(), "Build should re-run when build_command changes"
+    finally:
+        mod.stop()
+
+
 def test_rebuild_on_change_none_skips_check(build_env: dict[str, Path]) -> None:
     """When rebuild_on_change is None, no change detection happens at all."""
     exe = build_env["exe"]
