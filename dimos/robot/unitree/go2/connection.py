@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import csv
 import logging
+import math
 import sys
 from threading import Thread
 import time
@@ -197,6 +199,9 @@ class GO2Connection(Module, Camera, Pointcloud):
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
+    _prev_odom: PoseStamped | None = None
+    _csv_file: Any = None
+    _csv_writer: Any = None
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -248,16 +253,36 @@ class GO2Connection(Module, Camera, Pointcloud):
         )
         self._camera_info_thread.start()
 
+        self._prev_odom = None
+        csv_path = "go2_velocity_log.csv"
+        self._csv_file = open(csv_path, "w", newline="")
+        self._csv_writer = csv.writer(self._csv_file)
+        self._csv_writer.writerow(
+            ["time", "x", "y", "z", "yaw_deg", "vx", "vy", "speed", "cmd_vx", "cmd_vy", "cmd_wz"]
+        )
+        self._last_cmd = Twist()
+        print(f"[go2] logging velocity to {csv_path}")
+
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
+        print("[go2] mode=BalanceStand")
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+        print(f"[go2] obstacle_avoidance={self.config.g.obstacle_avoidance}")
+        self.connection.set_speed_level(2)  # High speed
+        print("[go2] speed_level=2 (high)")
+        self.connection.switch_gait(1)  # Trot running
+        print("[go2] gait=1 (trot running)")
 
         # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:
         self.liedown()
+
+        if self._csv_file:
+            self._csv_file.close()
+            print("[go2] velocity log saved to go2_velocity_log.csv")
 
         if self.connection:
             self.connection.stop()
@@ -297,6 +322,34 @@ class GO2Connection(Module, Camera, Pointcloud):
         if self.odom.transport:
             self.odom.publish(msg)
 
+        # Compute velocity from consecutive odom poses
+        if self._prev_odom is not None and self._csv_writer is not None:
+            dt = msg.ts - self._prev_odom.ts
+            if dt > 0.001:
+                dx = msg.x - self._prev_odom.x
+                dy = msg.y - self._prev_odom.y
+                vx = dx / dt
+                vy = dy / dt
+                speed = math.sqrt(vx * vx + vy * vy)
+                cmd = self._last_cmd
+                self._csv_writer.writerow(
+                    [
+                        f"{msg.ts:.3f}",
+                        f"{msg.x:.4f}",
+                        f"{msg.y:.4f}",
+                        f"{msg.z:.4f}",
+                        f"{math.degrees(msg.yaw):.1f}",
+                        f"{vx:.3f}",
+                        f"{vy:.3f}",
+                        f"{speed:.3f}",
+                        f"{cmd.linear.x:.2f}",
+                        f"{cmd.linear.y:.2f}",
+                        f"{cmd.angular.z:.2f}",
+                    ]
+                )
+                self._csv_file.flush()
+        self._prev_odom = msg
+
     def publish_camera_info(self) -> None:
         while True:
             self.camera_info.publish(self.camera_info_static)
@@ -305,6 +358,10 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
+        print(
+            f"[cmd_vel] linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}) angular_z={twist.angular.z:.2f}"
+        )
+        self._last_cmd = twist
         return self.connection.move(twist, duration)
 
     @rpc

@@ -145,7 +145,7 @@ unitree_go2_basic = (
         GO2Connection.blueprint(),
         WebsocketVisModule.blueprint(),
     )
-    .global_config(n_workers=4, robot_model="unitree_go2")
+    .global_config(n_workers=4, robot_model="unitree_go2", obstacle_avoidance=False)
     .configurators(ClockSyncConfigurator())
 )
 

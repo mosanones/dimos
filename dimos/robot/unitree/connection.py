@@ -286,6 +286,24 @@ class UnitreeWebRTCConnection(Resource):
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
         )
 
+    def set_speed_level(self, level: int = 0) -> bool:
+        """Set speed range: 0=low, 1=medium, 2=high."""
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": SPORT_CMD["SpeedLevel"], "parameter": {"data": level}},
+            )
+        )
+
+    def switch_gait(self, gait: int = 0) -> bool:
+        """Switch gait type: 0=trot, 1=trot running, 2=climb, 3=trot obstacle."""
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": SPORT_CMD["SwitchGait"], "parameter": {"data": gait}},
+            )
+        )
+
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         self.publish_request(
             RTC_TOPIC["OBSTACLES_AVOID"],
