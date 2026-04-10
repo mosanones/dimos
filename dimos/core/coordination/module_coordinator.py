@@ -321,7 +321,7 @@ class ModuleCoordinator(Resource):
 
         if not modules_to_disable:
             logger.warning(
-                "Replay: no modules disables - recording streams %s"
+                "Replay: no modules disabled - recording streams %s"
                 "don't match any module OUT names",
                 recorded_streams,
             )

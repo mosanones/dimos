@@ -19,6 +19,7 @@ import inspect
 import json
 import sys
 import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -39,10 +40,13 @@ from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.stream import Stream
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
+from dimos.types.timestamped import Timestamped
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
@@ -112,9 +116,11 @@ class ModuleBase(Configurable, CompositeResource):
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
+    _rec_store: SqliteStore | None = None
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
+        self._rec_unsubs: list[Callable[[], None]] = []
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         try:
@@ -145,7 +151,7 @@ class ModuleBase(Configurable, CompositeResource):
 
     @rpc
     def start(self) -> None:
-        self._listen_for_recording_commands()
+        pass
 
     @rpc
     def stop(self) -> None:
@@ -374,19 +380,7 @@ class ModuleBase(Configurable, CompositeResource):
 
     @rpc
     def start_recording(self, db_path: str) -> None:
-        self._start_recording(db_path)
-
-    @rpc
-    def stop_recording(self) -> None:
-        self._stop_recording()
-
-    def _start_recording(self, db_path: str) -> None:
-        import time
-
-        from dimos.memory2.store.sqlite import SqliteStore
-
         self._rec_store = SqliteStore(path=db_path)
-        self._rec_unsubs: list[Callable[[], None]] = []
         for name, out in self.outputs.items():
             stream = self._rec_store.stream(name, out.type)
             reg = self._rec_store._registry.get(name)
@@ -394,33 +388,23 @@ class ModuleBase(Configurable, CompositeResource):
                 reg["channel"] = f"/{name}#{out.type.msg_name}"
                 self._rec_store._registry.put(name, reg)
 
-            def cb(msg: Any, _stream: Any = stream) -> None:
-                ts = getattr(msg, "ts", None) or time.time()
+            def cb(msg: Any, _stream: Stream[object] = stream) -> None:
+                ts = msg.ts if isinstance(msg, Timestamped) else time.time()
                 _stream.append(msg, ts=ts)
 
             self._rec_unsubs.append(out.subscribe(cb))
 
+    @rpc
+    def stop_recording(self) -> None:
+        self._stop_recording()
+
     def _stop_recording(self) -> None:
-        for unsub in getattr(self, "_rec_unsubs", []):
+        for unsub in self._rec_unsubs:
             unsub()
         self._rec_unsubs = []
-        if hasattr(self, "_rec_store") and self._rec_store:
+        if self._rec_store is not None:
             self._rec_store.stop()
             self._rec_store = None
-
-    def _listen_for_recording_commands(self) -> None:
-        from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic as LCMTopic
-
-        self._rec_cmd_lcm = PickleLCM()
-        self._rec_cmd_lcm.start()
-
-        def on_cmd(msg: dict, topic: Any) -> None:
-            if msg.get("action") == "start":
-                self._start_recording(msg["db_path"])
-            elif msg.get("action") == "stop":
-                self._stop_recording()
-
-        self._rec_cmd_lcm.subscribe(LCMTopic("/dimos/record_cmd"), on_cmd)
 
     @rpc
     def set_module_ref(self, name: str, module_ref: "RPCClient") -> None:
