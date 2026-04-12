@@ -296,6 +296,7 @@ class NativeModule(Module):
             module=self._mod_label,
             pid=pid,
             returncode=rc,
+            last_stderr="\n".join(stderr_snapshot)[:500] if stderr_snapshot else None,
         )
 
         # Log the last stderr/stdout lines so the cause is visible.
@@ -332,7 +333,7 @@ class NativeModule(Module):
         self,
         stream: IO[bytes] | None,
         level: str,
-        tail_buf: list[str],
+        tail_buf: collections.deque[str],
     ) -> threading.Thread:
         """Spawn a daemon thread that pipes a subprocess stream through the logger."""
         t = threading.Thread(
@@ -348,7 +349,7 @@ class NativeModule(Module):
         self,
         stream: IO[bytes] | None,
         level: str,
-        tail_buf: list[str],
+        tail_buf: collections.deque[str],
     ) -> None:
         if stream is None:
             return
