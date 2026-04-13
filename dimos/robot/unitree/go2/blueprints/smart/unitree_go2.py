@@ -14,8 +14,16 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.stream import In
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
+from dimos.memory2.embed import EmbedImages
+from dimos.memory2.module import Recorder
+from dimos.memory2.transform import QualityWindow
+from dimos.models.embedding.clip import CLIPModel
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
@@ -32,4 +40,38 @@ unitree_go2 = autoconnect(
     PatrollingModule.blueprint(),
 ).global_config(n_workers=9, robot_model="unitree_go2")
 
-__all__ = ["unitree_go2"]
+
+class Go2Memory(Recorder):
+    color_image: In[Image]
+    lidar: In[PointCloud2]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        embedded = self._store.stream("color_image_embedded", Image)
+        clip = self.register_disposable(CLIPModel())
+
+        print(self._store.streams.color_image)
+        # fmt: off
+        self.register_disposable(
+            self._store.streams.color_image \
+               .live() \
+               .filter(lambda obs: obs.data.brightness > 0.1) \
+               .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
+               .transform(EmbedImages(clip, batch_size=2)) \
+               .save(embedded) \
+               .drain())
+        # fmt: on
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+unitree_go2_memory = autoconnect(
+    unitree_go2,
+    Go2Memory.blueprint(),
+).global_config(n_workers=10)
+
+__all__ = ["unitree_go2", "unitree_go2_memory"]

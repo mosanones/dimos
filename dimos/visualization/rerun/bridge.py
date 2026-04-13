@@ -316,17 +316,19 @@ class RerunBridgeModule(Module):
                     executable_name="dimos-viewer",
                     memory_limit=self.config.memory_limit,
                 )
+                rr.connect_grpc(f"rerun+http://127.0.0.1:{self.config.grpc_port}/proxy")
             except ImportError:
-                pass  # dimos-viewer not installed
+                rr.spawn(connect=True, memory_limit=self.config.memory_limit)
             except Exception:
                 logger.warning(
                     "dimos-viewer found but failed to spawn, falling back to stock rerun",
                     exc_info=True,
                 )
-            rr.spawn(connect=True, memory_limit=self.config.memory_limit)
+                rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
+
         elif self.config.viewer_mode == "connect":
             rr.connect_grpc(self.config.connect_url)
         # "none" - just init, no viewer (connect externally)
