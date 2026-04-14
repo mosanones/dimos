@@ -59,7 +59,7 @@ from pydantic import Field
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.utils.change_detect import PathEntry, did_change, update_cache
+from dimos.utils.change_detect import PathEntry, did_change
 from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
@@ -394,20 +394,18 @@ class NativeModule(Module):
         """Run ``build_command`` if the executable does not exist or sources changed."""
         exe = Path(self.config.executable)
 
-        # Check if rebuild needed due to source changes
-        needs_rebuild = False
-        if self.config.rebuild_on_change and exe.exists():
-            if did_change(
-                self._build_cache_name(),
-                self.config.rebuild_on_change,
-                cwd=self.config.cwd,
-                extra_hash=self.config.build_command,
-                update=False,
-            ):
-                logger.info("Source files changed, triggering rebuild", executable=str(exe))
-                needs_rebuild = True
-
-        if exe.exists() and not needs_rebuild:
+        # Check if rebuild needed due to source changes. We call did_change
+        # even when the exe is missing so the cache gets seeded on the first
+        # build — no separate seed step needed afterwards.
+        needs_rebuild = self.config.should_rebuild or (self.config.rebuild_on_change and did_change(
+            self._build_cache_name(),
+            self.config.rebuild_on_change,
+            cwd=self.config.cwd,
+            extra_hash=self.config.build_command,
+        ))
+        logger.info("Source files changed, triggering rebuild", executable=str(exe))
+        
+        if not needs_rebuild and exe.exists():
             return
 
         if self.config.build_command is None:
@@ -416,10 +414,14 @@ class NativeModule(Module):
                 "Set build_command in config to auto-build, or build it manually."
             )
 
-        # Don't unlink the exe before rebuilding — the build command is
-        # responsible for replacing it.  For nix builds the exe lives inside
-        # a read-only store; `nix build -o` atomically swaps the output
-        # symlink without touching store contents.
+        # Clear the old executable before rebuilding so a failed build can't
+        # leave us accidentally running a stale binary. For nix builds, ``exe``
+        # (e.g. "result") is a symlink into the read-only /nix/store — unlink()
+        # removes the symlink itself, not the store contents, and `nix build -o`
+        # will recreate it on success.
+        if exe.is_symlink() or exe.exists():
+            exe.unlink(missing_ok=True)
+
         logger.info(
             "Rebuilding" if needs_rebuild else "Executable not found, building",
             executable=str(exe),
@@ -457,16 +459,6 @@ class NativeModule(Module):
         if not exe.exists():
             raise FileNotFoundError(
                 f"[{self._mod_label}] Build command succeeded but executable still not found: {exe}"
-            )
-
-        # Seed the cache after a successful build so the next check has a baseline
-        # (needed for the initial build when the pre-build change check was skipped)
-        if self.config.rebuild_on_change:
-            update_cache(
-                self._build_cache_name(),
-                self.config.rebuild_on_change,
-                cwd=self.config.cwd,
-                extra_hash=self.config.build_command,
             )
 
     def _collect_topics(self) -> dict[str, str]:
