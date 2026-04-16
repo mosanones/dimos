@@ -70,11 +70,4 @@ unitree_g1_nav_arise_onboard = (
 )
 
 
-def main() -> None:
-    unitree_g1_nav_arise_onboard.build().loop()
-
-
 __all__ = ["unitree_g1_nav_arise_onboard"]
-
-if __name__ == "__main__":
-    main()

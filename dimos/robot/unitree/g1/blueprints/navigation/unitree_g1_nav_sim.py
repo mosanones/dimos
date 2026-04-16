@@ -53,7 +53,7 @@ unitree_g1_nav_sim = (
             vehicle_height=1.24,
         ),
         smart_nav(
-            # use_simple_planner=True,
+            use_simple_planner=True,
             terrain_analysis={
                 "obstacle_height_threshold": 0.1,
                 "ground_height_threshold": 0.05,
@@ -107,13 +107,3 @@ unitree_g1_nav_sim = (
     )
     .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
 )
-
-
-def main() -> None:
-    unitree_g1_nav_sim.build().loop()
-
-
-__all__ = ["unitree_g1_nav_sim"]
-
-if __name__ == "__main__":
-    main()

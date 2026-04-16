@@ -123,11 +123,4 @@ unitree_g1_nav_onboard = (
 )
 
 
-def main() -> None:
-    unitree_g1_nav_onboard.build().loop()
-
-
 __all__ = ["unitree_g1_nav_onboard"]
-
-if __name__ == "__main__":
-    main()
