@@ -384,6 +384,12 @@ class SimplePlanner(Module):
                 self._goal_x = None
                 self._goal_y = None
                 self._cached_path = None
+                rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
+            # Publish robot position as waypoint so LocalPlanner stops
+            # tracking the stale waypoint.
+            now = time.time()
+            self.way_point.publish(PointStamped(ts=now, frame_id="map", x=rx, y=ry, z=rz))
+            self.goal_path.publish(Path(ts=now, frame_id="map", poses=[]))
             logger.info("Goal cleared — idle until new goal")
             return
         with self._lock:
