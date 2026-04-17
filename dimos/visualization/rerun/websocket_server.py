@@ -141,25 +141,34 @@ class RerunWebSocketServer(Module):
         super().stop()
 
     def _log_connect_hints(self) -> None:
-        """Log the WebSocket URL(s) that viewers should connect to."""
+        """Log full dimos-viewer commands that viewers can use to connect."""
         import socket
 
         from dimos.utils.generic import get_local_ips
+        from dimos.visualization.constants import RERUN_GRPC_PORT
 
         local_ips = get_local_ips()
         hostname = socket.gethostname()
         ws_url = f"ws://127.0.0.1:{self.config.port}/ws"
+        grpc_url = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
 
         lines = [
             "",
             "=" * 60,
             f"RerunWebSocketServer listening on {ws_url}",
             "",
+            "Connect a viewer:",
+            f"  dimos-viewer --connect {grpc_url} --ws-url {ws_url}",
         ]
         if local_ips:
+            lines.append("")
             lines.append("From another machine on the network:")
             for ip, iface in local_ips:
-                lines.append(f"  ws://{ip}:{self.config.port}/ws  # {iface}")
+                remote_grpc = f"rerun+http://{ip}:{RERUN_GRPC_PORT}/proxy"
+                remote_ws = f"ws://{ip}:{self.config.port}/ws"
+                lines.append(
+                    f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}"
+                )
             lines.append("")
         lines.append(f"  hostname: {hostname}")
         lines.append("=" * 60)
