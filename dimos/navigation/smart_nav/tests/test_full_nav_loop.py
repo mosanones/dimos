@@ -149,6 +149,7 @@ class MockSensor(Module):
 def test_full_nav_closed_loop():
     """End-to-end: synthetic data -> terrain_map + path + cmd_vel produced."""
     from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
     from dimos.navigation.smart_nav.modules.path_follower.path_follower import PathFollower
@@ -166,7 +167,7 @@ def test_full_nav_closed_loop():
         PathFollower.blueprint(autonomy_mode=True),
     )
 
-    coordinator = blueprint.build()
+    coordinator = ModuleCoordinator.build(blueprint)
 
     terrain = coordinator.get_instance(TerrainAnalysis)
     planner = coordinator.get_instance(LocalPlanner)

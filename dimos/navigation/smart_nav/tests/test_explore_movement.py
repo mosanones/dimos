@@ -267,6 +267,7 @@ class Collector:
 def test_explore_produces_movement():
     """End-to-end: TARE planner drives robot movement via full pipeline."""
     from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.msgs.nav_msgs.Path import Path as NavPath
     from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
@@ -284,7 +285,7 @@ def test_explore_produces_movement():
         TarePlanner.blueprint(),
     )
 
-    coordinator = blueprint.build()
+    coordinator = ModuleCoordinator.build(blueprint)
 
     # Subscribe to outputs
     tare = coordinator.get_instance(TarePlanner)

@@ -34,8 +34,12 @@ from scipy.spatial.transform import Rotation
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.smart_nav.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -405,6 +409,10 @@ class PGO(Module):
     @rpc
     def start(self) -> None:
         self._pgo = _SimplePGO(self.config)
+        # Seed the TF tree with an identity map→odom so that consumers
+        # querying map→body get a result immediately (before any loop
+        # closure correction has been computed).
+        self._publish_map_odom_tf(np.eye(3), np.zeros(3), time.time())
         self.odometry.subscribe(self._on_odom)
         self.registered_scan.subscribe(self._on_scan)
         self._running = True
@@ -469,7 +477,10 @@ class PGO(Module):
 
             # Publish corrected odometry
             r_corr, t_corr = pgo.get_corrected_pose(r_local, t_local)
+            r_offset = pgo._r_offset.copy()
+            t_offset = pgo._t_offset.copy()
         self._publish_corrected_odom(r_corr, t_corr, ts)
+        self._publish_map_odom_tf(r_offset, t_offset, ts)
 
     def _publish_corrected_odom(self, r: np.ndarray, t: np.ndarray, ts: float) -> None:
         from dimos.msgs.geometry_msgs.Pose import Pose
@@ -478,14 +489,31 @@ class PGO(Module):
 
         odom = Odometry(
             ts=ts,
-            frame_id="map",
-            child_frame_id="sensor",
+            frame_id=FRAME_MAP,
+            child_frame_id=FRAME_BODY,
             pose=Pose(
                 position=[float(t[0]), float(t[1]), float(t[2])],
                 orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],
             ),
         )
         self.corrected_odometry.publish(odom)
+
+    def _publish_map_odom_tf(self, r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> None:
+        """Publish the ``map → odom`` correction transform to the TF tree.
+
+        Composed with FastLio2's ``odom → body``, this gives any
+        consumer ``map → body`` via BFS chain lookup.
+        """
+        q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
+        self.tf.publish(
+            Transform(
+                frame_id=FRAME_MAP,
+                child_frame_id=FRAME_ODOM,
+                translation=Vector3(float(t_offset[0]), float(t_offset[1]), float(t_offset[2])),
+                rotation=Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
+                ts=ts,
+            )
+        )
 
     def _publish_loop(self) -> None:
         """Periodically publish global map."""
@@ -503,7 +531,7 @@ class PGO(Module):
                     cloud_np = pgo.build_global_map(self.config.global_map_voxel_size)
                 if len(cloud_np) > 0:
                     self.global_map.publish(
-                        PointCloud2.from_numpy(cloud_np, frame_id="map", timestamp=now)
+                        PointCloud2.from_numpy(cloud_np, frame_id=FRAME_MAP, timestamp=now)
                     )
                     logger.debug(
                         "Global map published",

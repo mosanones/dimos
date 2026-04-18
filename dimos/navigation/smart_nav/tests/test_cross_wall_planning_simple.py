@@ -61,6 +61,7 @@ class TestCrossWallPlanningSimple:
 
     def test_cross_wall_sequence_simple(self) -> None:
         from dimos.core.coordination.blueprints import autoconnect
+        from dimos.core.coordination.module_coordinator import ModuleCoordinator
         from dimos.msgs.geometry_msgs.PointStamped import PointStamped
         from dimos.msgs.nav_msgs.Odometry import Odometry
         from dimos.navigation.smart_nav.main import smart_nav
@@ -125,23 +126,36 @@ class TestCrossWallPlanningSimple:
             .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
         )
 
-        coordinator = blueprint.build()
+        coordinator = ModuleCoordinator.build(blueprint)
 
         lock = threading.Lock()
         odom_count = 0
         robot_x = 0.0
         robot_y = 0.0
+        robot_z = 0.0
+        max_z = 0.0
+        # If the robot's z ever exceeds this, it has gone through the
+        # ceiling / climbed on top of geometry — navigation is broken.
+        # The sim's terrain-z estimate drifts ~0.3 m near walls (wall
+        # points within the 0.5 m terrain sampling radius pull the ground
+        # estimate upward), so this must tolerate vehicle_height (1.24 m)
+        # + terrain drift while still catching through-the-roof failures
+        # (roof is at ~3 m+).
+        MAX_ALLOWED_Z = 2.0
 
         lcm_url = os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
         lc = lcmlib.LCM(lcm_url)
 
         def _odom_handler(channel: str, data: bytes) -> None:
-            nonlocal odom_count, robot_x, robot_y
+            nonlocal odom_count, robot_x, robot_y, robot_z, max_z
             msg = Odometry.lcm_decode(data)
             with lock:
                 odom_count += 1
                 robot_x = msg.x
                 robot_y = msg.y
+                robot_z = msg.pose.position.z
+                if robot_z > max_z:
+                    max_z = robot_z
 
         lc.subscribe(ODOM_TOPIC, _odom_handler)
 
@@ -204,6 +218,14 @@ class TestCrossWallPlanningSimple:
                 while True:
                     with lock:
                         cx, cy = robot_x, robot_y
+                        cz = robot_z
+                        cur_max_z = max_z
+
+                    assert cz <= MAX_ALLOWED_Z, (
+                        f"{name}: robot z={cz:.2f}m exceeded {MAX_ALLOWED_Z}m — "
+                        f"robot went through the ceiling. "
+                        f"pos=({cx:.2f}, {cy:.2f}, {cz:.2f}), max_z={cur_max_z:.2f}m"
+                    )
 
                     dist = _distance(cx, cy, gx, gy)
                     now = time.monotonic()
@@ -212,7 +234,7 @@ class TestCrossWallPlanningSimple:
                     if now - last_print >= 5.0:
                         print(
                             f"[test-simple]   {name}: {elapsed:.0f}s/{timeout_sec}s | "
-                            f"pos ({cx:.2f}, {cy:.2f}) | dist={dist:.2f}m"
+                            f"pos ({cx:.2f}, {cy:.2f}, z={cz:.2f}) | dist={dist:.2f}m"
                         )
                         last_print = now
 
@@ -237,6 +259,15 @@ class TestCrossWallPlanningSimple:
                     f"{name}: robot did not reach ({gx}, {gy}) within {timeout_sec}s. "
                     f"Final pos=({cx:.2f}, {cy:.2f}), dist={dist:.2f}m"
                 )
+
+            # Final guard: the robot should never have gone above the
+            # allowed height at any point during the entire test run.
+            with lock:
+                final_max_z = max_z
+            assert final_max_z <= MAX_ALLOWED_Z, (
+                f"Robot z peaked at {final_max_z:.2f}m during the run "
+                f"(limit {MAX_ALLOWED_Z}m) — went through the ceiling"
+            )
 
         finally:
             print("\n[test-simple] Stopping blueprint…")

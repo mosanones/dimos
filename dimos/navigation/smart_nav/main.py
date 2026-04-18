@@ -225,15 +225,11 @@ def smart_nav(
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         # PathFollower cmd_vel → MovementManager nav input (avoid collision with mux output)
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        # Global-scale planners use PGO-corrected odometry (per CMU ICRA 2022):
-        # loop-closure adjustments go to high-level planners; local modules
-        # care only about the local environment and work in the odom frame.
-        (
-            SimplePlanner if use_simple_planner else FarPlanner,
-            "odometry",
-            "corrected_odometry",
-        ),
-        (MovementManager, "odometry", "corrected_odometry"),
+        # NativeModule planners still receive corrected odometry via the
+        # stream (C++ binaries subscribe to LCM topics directly).
+        # Python modules (SimplePlanner, MovementManager) query the TF tree
+        # instead (map→body via the PGO map→odom + FastLio2 odom→body chain).
+        *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         # Planner owns way_point — disconnect MovementManager's click relay.
         (MovementManager, "way_point", "_mgr_way_point_unused"),

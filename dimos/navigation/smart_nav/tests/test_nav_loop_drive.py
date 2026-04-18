@@ -179,6 +179,7 @@ class Vehicle(Module):
 def test_multi_waypoint_loop():
     """Send 4 waypoints in a square, verify robot moves toward each."""
     from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
     from dimos.navigation.smart_nav.modules.path_follower.path_follower import PathFollower
     from dimos.navigation.smart_nav.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
@@ -203,7 +204,7 @@ def test_multi_waypoint_loop():
             slow_down_distance_threshold=0.2,
         ),
     )
-    coord = blueprint.build()
+    coord = ModuleCoordinator.build(blueprint)
 
     planner = coord.get_instance(LocalPlanner)
     follower = coord.get_instance(PathFollower)

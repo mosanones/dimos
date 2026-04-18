@@ -41,7 +41,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.navigation.smart_nav.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -59,7 +59,6 @@ class MovementManager(Module):
 
     Ports:
         clicked_point (In[PointStamped]): Click from viewer → publishes goal.
-        odometry (In[Odometry]): Robot pose (used for stop waypoint on cancel).
         nav_cmd_vel (In[Twist]): Velocity from the autonomous planner.
         tele_cmd_vel (In[Twist]): Velocity from keyboard/joystick teleop.
         goal (Out[PointStamped]): Navigation goal for the global planner.
@@ -67,12 +66,14 @@ class MovementManager(Module):
         cmd_vel (Out[Twist]): Merged velocity — teleop wins when active.
         stop_movement (Out[Bool]): Fired once when teleop takes over, for
             modules that listen directly (e.g. FarPlanner C++ binary).
+
+    Robot pose is obtained via the TF tree (``map → body``) rather than
+    an Odometry stream.
     """
 
     config: MovementManagerConfig
 
     clicked_point: In[PointStamped]
-    odometry: In[Odometry]
     nav_cmd_vel: In[Twist]
     tele_cmd_vel: In[Twist]
 
@@ -112,7 +113,6 @@ class MovementManager(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.odometry.subscribe(self._on_odom)
         self.clicked_point.subscribe(self._on_click)
         self.nav_cmd_vel.subscribe(self._on_nav)
         self.tele_cmd_vel.subscribe(self._on_teleop)
@@ -126,13 +126,27 @@ class MovementManager(Module):
                 self._timer = None
         super().stop()
 
-    # ── Odometry ──────────────────────────────────────────────────────────
+    # ── TF pose query ────────────────────────────────────────────────────
 
-    def _on_odom(self, msg: Odometry) -> None:
+    # Ordered (parent, child) TF lookups — first match wins.
+    _TF_POSE_QUERIES: list[tuple[str, str]] = [
+        (FRAME_MAP, FRAME_BODY),
+        (FRAME_ODOM, FRAME_BODY),
+        (FRAME_MAP, "sensor"),
+    ]
+
+    def _query_pose(self) -> tuple[float, float, float]:
+        """Return (x, y, z) from the TF tree, falling back to cached values."""
+        for parent, child in self._TF_POSE_QUERIES:
+            tf = self.tf.get(parent, child)
+            if tf is not None:
+                with self._lock:
+                    self._robot_x = float(tf.translation.x)
+                    self._robot_y = float(tf.translation.y)
+                    self._robot_z = float(tf.translation.z)
+                break
         with self._lock:
-            self._robot_x = msg.pose.position.x
-            self._robot_y = msg.pose.position.y
-            self._robot_z = msg.pose.position.z
+            return self._robot_x, self._robot_y, self._robot_z
 
     # ── Click-to-goal ─────────────────────────────────────────────────────
 
@@ -150,8 +164,12 @@ class MovementManager(Module):
 
     def _cancel_goal(self) -> None:
         """Publish NaN goal so planners clear their active goal."""
+        self.stop_movement.publish(Bool(data=True))
+        # NOTE: this NaN goal is more of a saftey fallback.
+        # It can be REALLY bad if a robot is supposed to stop moving but wont
+        # we should probably think a more robust/strict requirement on planners
         cancel = PointStamped(
-            ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
+            ts=time.time(), frame_id=FRAME_MAP, x=float("nan"), y=float("nan"), z=float("nan")
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel)
@@ -193,7 +211,6 @@ class MovementManager(Module):
         if not was_active:
             # Cancel the nav goal directly and notify external listeners.
             self._cancel_goal()
-            self.stop_movement.publish(Bool(data=True))
             logger.info("Teleop active")
 
         self.cmd_vel.publish(msg)

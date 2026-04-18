@@ -34,10 +34,12 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 import socket
+import time
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic.experimental.pipeline import validate_as
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -53,8 +55,12 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_PUSH_MSG_PORT,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.smart_nav.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
 from dimos.utils.logging_config import setup_logger
 
@@ -122,9 +128,11 @@ class FastLio2Config(NativeModuleConfig):
     # Converted to init_pose CLI arg [x, y, z, qx, qy, qz, qw] in model_post_init.
     mount: Pose = Pose()
 
-    # Frame IDs for output messages
-    frame_id: str = "map"
-    child_frame_id: str = "body"
+    # Frame IDs for output messages.  "odom" reflects that FastLio2 provides
+    # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
+    # publishes the map→odom correction via TF.
+    frame_id: str = FRAME_ODOM
+    child_frame_id: str = FRAME_BODY
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0
@@ -206,6 +214,34 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._validate_network()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        # Subscribe to our own odometry output so we can mirror each
+        # pose update into the TF tree as an odom→body transform.
+        self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry)
+
+    def _on_odom_for_tf(self, msg: Odometry) -> None:
+        """Publish the SLAM pose as an ``odom → body`` TF transform."""
+        self.tf.publish(
+            Transform(
+                frame_id=FRAME_ODOM,
+                child_frame_id=FRAME_BODY,
+                translation=Vector3(
+                    msg.pose.position.x,
+                    msg.pose.position.y,
+                    msg.pose.position.z,
+                ),
+                rotation=Quaternion(
+                    msg.pose.orientation.x,
+                    msg.pose.orientation.y,
+                    msg.pose.orientation.z,
+                    msg.pose.orientation.w,
+                ),
+                ts=msg.ts or time.time(),
+            )
+        )
 
     def _validate_network(self) -> None:
         """Pre-flight check: verify host_ip is reachable and suggest alternatives."""
