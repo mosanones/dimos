@@ -299,22 +299,130 @@ class SlamBackend(Protocol):
         ...
 
 
-# ─── PGO Backend (wraps _SimplePGO) ────────────────────────────────────────
+# ─── Module Backend (wraps any DimOS Module) ─────────────────────────────
 
 
-class PGOBackend:
-    """SlamBackend wrapper around the PGO module's ``_SimplePGO`` core."""
+class ModuleBackend:
+    """SlamBackend that wraps any DimOS Module with odometry streams.
 
-    def __init__(self, **config_overrides: Any) -> None:
-        from dimos.navigation.smart_nav.modules.pgo.pgo import PGOConfig, _SimplePGO
+    Automatically detects ``In[Odometry]``, ``In[PointCloud2]``, and
+    ``Out[Odometry]`` streams on the module, instantiates it, and replays
+    data through the module's actual callbacks.
 
-        self._cfg = PGOConfig(**config_overrides)
-        self._pgo = _SimplePGO(self._cfg)
+    Usage::
+
+        from dimos.navigation.smart_nav.modules.pgo.pgo import PGO
+        results = slam_eval(ModuleBackend(PGO))
+
+    Or more concisely — ``slam_eval`` accepts a Module class directly::
+
+        results = slam_eval(PGO, dataset="tum_fr1_desk")
+    """
+
+    def __init__(self, module_class: type, **config_overrides: Any) -> None:
+        from dimos.core.module import Module
+
+        if not (isinstance(module_class, type) and issubclass(module_class, Module)):
+            raise TypeError(f"Expected a DimOS Module class, got {type(module_class)}")
+
+        self._module_class = module_class
+        self._config_overrides = config_overrides
+        self._module: Any = None
+        self._trajectory: list[TrajectoryPose] = []
+
+        # Discover stream names from type annotations
+        self._odom_in_name: str | None = None
+        self._scan_in_name: str | None = None
+        self._odom_out_name: str | None = None
+
+        # Annotations may be strings (from __future__ annotations) or types.
+        # Match both forms.
+        hints: dict[str, Any] = {}
+        for cls in reversed(module_class.__mro__):
+            if hasattr(cls, "__annotations__"):
+                hints.update(cls.__annotations__)
+
+        for attr_name, annotation in hints.items():
+            ann_str = annotation if isinstance(annotation, str) else repr(annotation)
+            if "In[" in ann_str and "Odometry" in ann_str:
+                self._odom_in_name = attr_name
+            elif "In[" in ann_str and "PointCloud2" in ann_str:
+                self._scan_in_name = attr_name
+            elif "Out[" in ann_str and "Odometry" in ann_str and self._odom_out_name is None:
+                self._odom_out_name = attr_name
+
+        if self._odom_in_name is None:
+            raise ValueError(f"{module_class.__name__} has no In[Odometry] stream")
+        if self._scan_in_name is None:
+            raise ValueError(f"{module_class.__name__} has no In[PointCloud2] stream")
+        if self._odom_out_name is None:
+            raise ValueError(f"{module_class.__name__} has no Out[Odometry] stream")
+
+        self._init_module()
+
+    def _init_module(self) -> None:
+        """Instantiate and start the module."""
+        from dimos.core.stream import In, Out, Transport
+
+        self._trajectory = []
+        self._module = self._module_class(**self._config_overrides)
+
+        # Create a minimal local transport for In streams so subscribe() works.
+        # Normally the coordinator sets this up, but we're running standalone.
+        class _LocalTransport(Transport):  # type: ignore[type-arg]
+            def __init__(self) -> None:
+                self._callbacks: list[Any] = []
+
+            def subscribe(self, callback: Any, selfstream: Any = None) -> Any:
+                self._callbacks.append(callback)
+
+                def unsub() -> None:
+                    self._callbacks.remove(callback)
+
+                return unsub
+
+            def broadcast(self, selfstream: Any, value: Any) -> None:
+                for cb in self._callbacks:
+                    cb(value)
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        # Assign local transports to all In/Out streams on the module
+        for attr_name in dir(self._module):
+            attr = getattr(self._module, attr_name, None)
+            if isinstance(attr, (In, Out)) and attr._transport is None:
+                attr._transport = _LocalTransport()
+
+        # Subscribe to the output odometry stream to capture trajectory
+        out_stream = getattr(self._module, self._odom_out_name)
+        out_stream.subscribe(self._on_output_odom)
+
+        # Start the module (registers its internal callbacks on In streams)
+        self._module.start()
+
+    def _on_output_odom(self, msg: Any) -> None:
+        """Capture output odometry into trajectory."""
+        q = [
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w,
+        ]
+        r = Rotation.from_quat(q).as_matrix()
+        t = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
+        self._trajectory.append(TrajectoryPose(timestamp=msg.ts, position=t, rotation=r))
 
     def reset(self) -> None:
-        from dimos.navigation.smart_nav.modules.pgo.pgo import _SimplePGO
-
-        self._pgo = _SimplePGO(self._cfg)
+        if self._module is not None:
+            try:
+                self._module.stop()
+            except Exception:
+                pass
+        self._init_module()
 
     def process_frame(
         self,
@@ -323,24 +431,39 @@ class PGOBackend:
         timestamp: float,
         point_cloud: np.ndarray,
     ) -> bool:
-        added = self._pgo.add_key_pose(rotation, translation, timestamp, point_cloud)
-        if added:
-            self._pgo.search_for_loops()
-            self._pgo.smooth_and_update()
-        return added
+        from dimos.msgs.geometry_msgs.Pose import Pose
+        from dimos.msgs.nav_msgs.Odometry import Odometry
+        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+        assert self._module is not None
+
+        # Build Odometry message
+        q = Rotation.from_matrix(rotation).as_quat()  # [x,y,z,w]
+        odom = Odometry(
+            ts=timestamp,
+            frame_id="odom",
+            child_frame_id="body",
+            pose=Pose(position=translation.tolist(), orientation=q.tolist()),
+        )
+
+        # Build PointCloud2 from numpy
+        cloud = PointCloud2.from_numpy(point_cloud, frame_id="world", timestamp=timestamp)
+
+        # Feed data through the module's In stream transports
+        odom_in = getattr(self._module, self._odom_in_name)  # type: ignore[arg-type]
+        scan_in = getattr(self._module, self._scan_in_name)  # type: ignore[arg-type]
+
+        # Publish odometry first (module needs it before processing scan)
+        odom_in._transport.broadcast(odom_in, odom)
+
+        # Publish scan (triggers keyframe detection, loop closure, etc.)
+        n_before = len(self._trajectory)
+        scan_in._transport.broadcast(scan_in, cloud)
+
+        return len(self._trajectory) > n_before
 
     def get_trajectory(self) -> list[TrajectoryPose]:
-        # Access _key_poses directly — _SimplePGO has no public trajectory accessor
-        poses = []
-        for kp in self._pgo._key_poses:
-            poses.append(
-                TrajectoryPose(
-                    timestamp=kp.timestamp,
-                    position=kp.t_global.copy(),
-                    rotation=kp.r_global.copy(),
-                )
-            )
-        return poses
+        return list(self._trajectory)
 
 
 # ─── Dataset Loaders ───────────────────────────────────────────────────────
@@ -929,18 +1052,20 @@ def _resolve_noise(noise: NoiseProfile | str | None) -> NoiseProfile | None:
 
 
 def slam_eval(
-    backend: SlamBackend,
+    backend: SlamBackend | type,
     dataset: str | EvalDataset = "synthetic_circle",
     *,
     noise: NoiseProfile | str | None = None,
     output_path: str | Path | None = None,
     max_frames: int | None = None,
     cloud_points: int = 200,
+    **module_config: Any,
 ) -> dict[str, Any]:
     """Run SLAM evaluation on a dataset and return metrics.
 
     Args:
-        backend: SLAM backend implementing the ``SlamBackend`` protocol
+        backend: Either a ``SlamBackend`` instance, or a DimOS Module class
+            (e.g. ``PGO``). Module classes are auto-wrapped via ``ModuleBackend``.
         dataset: Dataset name (string) or pre-loaded ``EvalDataset``
         noise: Noise profile to corrupt input odometry. Can be a ``NoiseProfile``
             instance, a preset name (``"none"``, ``"lidar_mild"``, ``"lidar_harsh"``,
@@ -949,10 +1074,29 @@ def slam_eval(
         output_path: Path to write metrics.json (default: module dir)
         max_frames: Limit number of frames
         cloud_points: Points per synthetic cloud (for datasets without real clouds)
+        **module_config: Config overrides passed to ``ModuleBackend`` when
+            ``backend`` is a Module class.
 
     Returns:
         Dict with ate, rpe, drift, timing, and dataset metadata.
+
+    Examples::
+
+        # Pass a DimOS module class directly:
+        from dimos.navigation.smart_nav.modules.pgo.pgo import PGO
+        results = slam_eval(PGO, dataset="tum_fr1_desk")
+
+        # Or with config overrides:
+        results = slam_eval(PGO, dataset="tum_fr1_desk",
+                            key_pose_delta_trans=0.3)
+
+        # Or pass a custom SlamBackend:
+        results = slam_eval(my_backend, dataset="synthetic_circle")
     """
+    # Auto-wrap Module classes
+    if isinstance(backend, type):
+        backend = ModuleBackend(backend, **module_config)
+
     # Resolve noise profile
     noise_profile = _resolve_noise(noise)
 
@@ -1057,5 +1201,12 @@ def slam_eval(
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
     logger.info("Metrics written to %s", output_path)
+
+    # Clean up ModuleBackend (stops the module's threads)
+    if isinstance(backend, ModuleBackend) and backend._module is not None:
+        try:
+            backend._module.stop()
+        except Exception:
+            pass
 
     return results

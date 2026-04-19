@@ -14,6 +14,7 @@
 
 from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import (
     EvalDataset,
+    ModuleBackend,
     NoiseProfile,
     SensorFrame,
     SlamBackend,
@@ -24,6 +25,7 @@ from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import (
 
 __all__ = [
     "EvalDataset",
+    "ModuleBackend",
     "NoiseProfile",
     "SensorFrame",
     "SlamBackend",

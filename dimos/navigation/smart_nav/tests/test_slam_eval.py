@@ -40,8 +40,7 @@ from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import (
 )
 
 try:
-    from dimos.navigation.smart_nav.modules.pgo.pgo import _SimplePGO
-    from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import PGOBackend
+    from dimos.navigation.smart_nav.modules.pgo.pgo import PGO, _SimplePGO
 
     _HAS_PGO_DEPS = True
     del _SimplePGO  # only needed to check import availability
@@ -196,10 +195,12 @@ class TestDatasets:
 
 
 @_requires_gtsam
-class TestPGOBackend:
+class TestModuleBackend:
     def test_process_and_trajectory(self) -> None:
-        """PGOBackend produces a trajectory from synthetic data."""
-        backend = PGOBackend(key_pose_delta_trans=0.3)
+        """ModuleBackend wraps PGO and produces a trajectory."""
+        from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import ModuleBackend
+
+        backend = ModuleBackend(PGO)
         ds = load_dataset("synthetic_circle", max_frames=100, cloud_points=100)
 
         for frame in ds.frames:
@@ -212,9 +213,12 @@ class TestPGOBackend:
 
         traj = backend.get_trajectory()
         assert len(traj) > 0
+        backend._module.stop()
 
     def test_reset(self) -> None:
-        backend = PGOBackend()
+        from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import ModuleBackend
+
+        backend = ModuleBackend(PGO)
         ds = load_dataset("synthetic_circle", max_frames=20, cloud_points=50)
         for frame in ds.frames:
             backend.process_frame(
@@ -223,6 +227,7 @@ class TestPGOBackend:
 
         backend.reset()
         assert len(backend.get_trajectory()) == 0
+        backend._module.stop()
 
 
 # ─── Integration: full slam_eval ──────────────────────────────────────────
@@ -234,7 +239,7 @@ class TestSlamEval:
         """Full eval pipeline produces valid metrics JSON."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "metrics.json"
-            backend = PGOBackend(key_pose_delta_trans=0.3)
+            backend = PGO
             results = slam_eval(
                 backend,
                 dataset="synthetic_circle",
@@ -250,7 +255,7 @@ class TestSlamEval:
             assert "timing" in results
             assert results["n_frames"] == 100
             assert results["n_keyframes"] > 0
-            assert results["backend"] == "PGOBackend"
+            assert results["backend"] == "ModuleBackend"
 
             # ATE should be finite
             assert math.isfinite(results["ate"]["rmse"])
@@ -265,7 +270,7 @@ class TestSlamEval:
         """Figure-8 dataset works end-to-end."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "metrics.json"
-            backend = PGOBackend(key_pose_delta_trans=0.3)
+            backend = PGO
             results = slam_eval(
                 backend,
                 dataset="synthetic_figure8",
@@ -293,7 +298,7 @@ class TestSlamEval:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "metrics.json"
-            backend = PGOBackend(key_pose_delta_trans=0.3)
+            backend = PGO
             results = slam_eval(backend, dataset=ds, output_path=output)
             assert results["dataset"] == "custom_test"
             assert math.isfinite(results["ate"]["rmse"])
@@ -416,7 +421,7 @@ class TestSlamEvalWithNoise:
     def test_noise_increases_ate(self) -> None:
         """Adding noise should increase ATE compared to no noise."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            backend_clean = PGOBackend(key_pose_delta_trans=0.3)
+            backend_clean = PGO
             results_clean = slam_eval(
                 backend_clean,
                 dataset="synthetic_circle",
@@ -425,7 +430,7 @@ class TestSlamEvalWithNoise:
                 cloud_points=100,
             )
 
-            backend_noisy = PGOBackend(key_pose_delta_trans=0.3)
+            backend_noisy = PGO
             results_noisy = slam_eval(
                 backend_noisy,
                 dataset="synthetic_circle",
@@ -442,7 +447,7 @@ class TestSlamEvalWithNoise:
     def test_noise_preset_string(self) -> None:
         """Can pass noise as a string preset name."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            backend = PGOBackend(key_pose_delta_trans=0.3)
+            backend = PGO
             results = slam_eval(
                 backend,
                 dataset="synthetic_circle",
