@@ -87,7 +87,8 @@ WAYPOINTS = [
     ("p4_cross_wall", -2.5, -2.5, 0.0, 120, 2.0),
 ]
 
-WARMUP_SEC = 25.0  # Let nav stack build initial voxel map (CPU rendering is slow)
+WARMUP_SEC = 25.0  # Let nav stack build initial voxel map
+ODOM_WAIT_SEC = 180.0  # Rapier snapshot init can take 2-3 min on CPU rendering
 
 
 def _distance(x1: float, y1: float, x2: float, y2: float) -> float:
@@ -210,8 +211,9 @@ class TestDimSimCrossWall:
         try:
             print("[test] Blueprint started, waiting for odom…")
 
-            # Wait for first odom (sim is up + Rapier snapshot received)
-            deadline = time.monotonic() + 90.0
+            # Wait for first odom (sim is up + Rapier snapshot received).
+            # CPU rendering (SwiftShader) can take 2-3 min for scene load.
+            deadline = time.monotonic() + ODOM_WAIT_SEC
             while time.monotonic() < deadline:
                 with lock:
                     if odom_count > 0:
@@ -220,7 +222,7 @@ class TestDimSimCrossWall:
 
             with lock:
                 assert odom_count > 0, (
-                    "No odometry received after 90s — DimSim not running?"
+                    f"No odometry received after {ODOM_WAIT_SEC}s — DimSim not running?"
                 )
 
             print(f"[test] Odom online. Robot at ({robot_x:.2f}, {robot_y:.2f})")
