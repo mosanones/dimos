@@ -48,7 +48,17 @@ import numpy as np
 import requests
 from scipy.spatial.transform import Rotation
 
+from dimos.core.module import Module
+from dimos.core.stream import In, Out, Transport
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
 logger = logging.getLogger(__name__)
+
+# Maximum time difference (seconds) for matching timestamps between
+# estimated and ground truth poses, or between RGB and depth frames.
+_MAX_TIMESTAMP_DIFF = 0.1
 
 # ─── Dataset cache ──────────────────────────────────────────────────────────
 
@@ -206,7 +216,7 @@ def apply_noise(
         and noise.point_cloud_outlier_ratio == 0.0
     )
     if all_zero:
-        return frames
+        return list(frames)
 
     rng = np.random.default_rng(noise.seed)
     noisy_frames = []
@@ -320,8 +330,6 @@ class ModuleBackend:
     """
 
     def __init__(self, module_class: type, **config_overrides: Any) -> None:
-        from dimos.core.module import Module
-
         if not (isinstance(module_class, type) and issubclass(module_class, Module)):
             raise TypeError(f"Expected a DimOS Module class, got {type(module_class)}")
 
@@ -362,8 +370,6 @@ class ModuleBackend:
 
     def _init_module(self) -> None:
         """Instantiate and start the module."""
-        from dimos.core.stream import In, Out, Transport
-
         self._trajectory = []
         self._module = self._module_class(**self._config_overrides)
 
@@ -382,7 +388,7 @@ class ModuleBackend:
                 return unsub
 
             def broadcast(self, selfstream: Any, value: Any) -> None:
-                for cb in self._callbacks:
+                for cb in list(self._callbacks):
                     cb(value)
 
             def start(self) -> None:
@@ -431,10 +437,6 @@ class ModuleBackend:
         timestamp: float,
         point_cloud: np.ndarray,
     ) -> bool:
-        from dimos.msgs.geometry_msgs.Pose import Pose
-        from dimos.msgs.nav_msgs.Odometry import Odometry
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
         assert self._module is not None
 
         # Build Odometry message
@@ -770,10 +772,12 @@ def _make_synthetic_figure8(
         x = scale * math.sin(angle)
         y = scale * math.sin(angle) * math.cos(angle)
         z = 0.0
-        # Numerical heading from finite differences
+        # Heading from finite difference of position
         angle_next = 2.0 * math.pi * (i + 1) / n_frames
-        dx = scale * math.cos(angle_next) - scale * math.cos(angle)
-        dy = scale * (math.cos(2 * angle_next) - math.cos(2 * angle))
+        x_next = scale * math.sin(angle_next)
+        y_next = scale * math.sin(angle_next) * math.cos(angle_next)
+        dx = x_next - x
+        dy = y_next - y
         yaw = math.atan2(dy, dx) if (abs(dx) + abs(dy)) > 1e-9 else 0.0
         r = Rotation.from_euler("z", yaw).as_matrix()
         cloud = _generate_synthetic_cloud(cloud_points, seed=i)
@@ -833,7 +837,7 @@ def _load_tum_dataset(
         # Find nearest ground truth pose
         frame_ts = rgb_ts
         gt_idx = int(np.argmin(np.abs(gt_times - frame_ts)))
-        if abs(gt_poses[gt_idx].timestamp - frame_ts) > 0.1:
+        if abs(gt_poses[gt_idx].timestamp - frame_ts) > _MAX_TIMESTAMP_DIFF:
             continue  # no close enough ground truth
 
         gt_pose = gt_poses[gt_idx]
@@ -891,6 +895,9 @@ def _align_trajectories(
     """Align estimated and ground truth trajectories by nearest timestamp.
 
     Returns pairs of (estimated, ground_truth) poses.
+
+    Note: multiple estimated poses may match the same ground truth pose
+    if the estimated trajectory has higher frequency than ground truth.
     """
     if not estimated or not ground_truth:
         return []
@@ -901,7 +908,7 @@ def _align_trajectories(
         idx = int(np.argmin(np.abs(gt_times - est.timestamp)))
         time_diff = abs(est.timestamp - ground_truth[idx].timestamp)
         # Only match if within 0.1s
-        if time_diff < 0.1:
+        if time_diff < _MAX_TIMESTAMP_DIFF:
             pairs.append((est, ground_truth[idx]))
     return pairs
 
@@ -1096,6 +1103,11 @@ def slam_eval(
     # Auto-wrap Module classes
     if isinstance(backend, type):
         backend = ModuleBackend(backend, **module_config)
+    elif module_config:
+        logger.warning(
+            "module_config kwargs (%s) are ignored when backend is an instance, not a class",
+            list(module_config.keys()),
+        )
 
     # Resolve noise profile
     noise_profile = _resolve_noise(noise)

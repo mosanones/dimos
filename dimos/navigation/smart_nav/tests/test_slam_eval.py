@@ -458,3 +458,32 @@ class TestSlamEvalWithNoise:
             )
             assert results["noise"]["label"] == "visual_mild"
             assert math.isfinite(results["ate"]["rmse"])
+
+
+# ─── Error handling ──────────────────────────────────────────────────────
+
+
+class TestErrorHandling:
+    def test_invalid_noise_preset(self) -> None:
+        from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import _resolve_noise
+
+        with pytest.raises(ValueError, match="Unknown noise preset"):
+            _resolve_noise("bogus_preset")
+
+    @_requires_gtsam
+    def test_module_backend_non_module_class(self) -> None:
+        from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import ModuleBackend
+
+        with pytest.raises(TypeError, match="Expected a DimOS Module class"):
+            ModuleBackend(str)  # type: ignore[arg-type]
+
+    @_requires_gtsam
+    def test_module_backend_missing_streams(self) -> None:
+        from dimos.core.module import Module
+        from dimos.navigation.smart_nav.modules.slam_eval.slam_eval import ModuleBackend
+
+        class EmptyModule(Module):
+            pass
+
+        with pytest.raises(ValueError, match="has no In"):
+            ModuleBackend(EmptyModule)
