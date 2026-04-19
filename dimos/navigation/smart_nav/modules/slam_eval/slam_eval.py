@@ -363,8 +363,9 @@ class ModuleBackend:
             raise ValueError(f"{module_class.__name__} has no In[Odometry] stream")
         if self._scan_in_name is None:
             raise ValueError(f"{module_class.__name__} has no In[PointCloud2] stream")
-        if self._odom_out_name is None:
-            raise ValueError(f"{module_class.__name__} has no Out[Odometry] stream")
+        # Out[Odometry] is optional — some modules (e.g. PGO) publish
+        # corrections via TF instead. We fall back to reading internal state.
+        self._uses_tf_output = self._odom_out_name is None
 
         self._init_module()
 
@@ -404,8 +405,9 @@ class ModuleBackend:
                 attr._transport = _LocalTransport()
 
         # Subscribe to the output odometry stream to capture trajectory
-        out_stream = getattr(self._module, self._odom_out_name)
-        out_stream.subscribe(self._on_output_odom)
+        if self._odom_out_name is not None:
+            out_stream = getattr(self._module, self._odom_out_name)
+            out_stream.subscribe(self._on_output_odom)
 
         # Start the module (registers its internal callbacks on In streams)
         self._module.start()
@@ -459,12 +461,29 @@ class ModuleBackend:
         odom_in._transport.broadcast(odom_in, odom)
 
         # Publish scan (triggers keyframe detection, loop closure, etc.)
-        n_before = len(self._trajectory)
+        n_before = len(self.get_trajectory())
         scan_in._transport.broadcast(scan_in, cloud)
 
-        return len(self._trajectory) > n_before
+        return len(self.get_trajectory()) > n_before
 
     def get_trajectory(self) -> list[TrajectoryPose]:
+        if not self._uses_tf_output:
+            return list(self._trajectory)
+
+        # Module publishes corrections via TF instead of Out[Odometry].
+        # Read corrected poses from internal PGO state.
+        if hasattr(self._module, "_pgo") and self._module._pgo is not None:
+            poses = []
+            for kp in self._module._pgo._key_poses:
+                poses.append(
+                    TrajectoryPose(
+                        timestamp=kp.timestamp,
+                        position=kp.t_global.copy(),
+                        rotation=kp.r_global.copy(),
+                    )
+                )
+            return poses
+
         return list(self._trajectory)
 
 
