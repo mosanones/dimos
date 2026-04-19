@@ -97,8 +97,69 @@ def _dimsim_bin() -> Path:
     return Path.home() / ".dimsim" / "bin" / "dimsim"
 
 
-def _find_deno() -> str:
-    return shutil.which("deno") or str(Path.home() / ".deno" / "bin" / "deno")
+def _deno_home_bin() -> Path:
+    """Default deno binary location when installed via curl installer."""
+    return Path.home() / ".deno" / "bin"
+
+
+def _ensure_deno() -> str:
+    """Find or install Deno. Returns the path to the deno binary.
+
+    If deno is not on PATH or at ~/.deno/bin/deno, installs it using the
+    official curl installer and adds ~/.deno/bin to PATH for this process.
+    """
+    # Check PATH first
+    found = shutil.which("deno")
+    if found:
+        return found
+
+    # Check default install location
+    deno_bin = _deno_home_bin() / "deno"
+    if deno_bin.exists():
+        # Add to PATH so subprocess calls find it too
+        _add_deno_to_path()
+        return str(deno_bin)
+
+    # Install via curl
+    logger.info("Deno not found — installing via official installer…")
+    try:
+        result = subprocess.run(
+            ["curl", "-fsSL", "https://deno.land/install.sh"],
+            capture_output=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to download installer: {result.stderr.decode()}")
+
+        install = subprocess.run(
+            ["sh"],
+            input=result.stdout,
+            capture_output=True, timeout=120,
+        )
+        if install.returncode != 0:
+            raise RuntimeError(f"Installer failed: {install.stderr.decode()}")
+
+        logger.info("Deno installed successfully.")
+    except Exception as e:
+        raise FileNotFoundError(
+            f"Could not install Deno automatically: {e}. "
+            "Install manually: curl -fsSL https://deno.land/install.sh | sh"
+        ) from e
+
+    _add_deno_to_path()
+
+    deno_path = str(deno_bin)
+    if not deno_bin.exists():
+        # Try finding it on the now-updated PATH
+        deno_path = shutil.which("deno") or deno_path
+    return deno_path
+
+
+def _add_deno_to_path() -> None:
+    """Add ~/.deno/bin to this process's PATH if not already there."""
+    deno_dir = str(_deno_home_bin())
+    current_path = os.environ.get("PATH", "")
+    if deno_dir not in current_path.split(os.pathsep):
+        os.environ["PATH"] = deno_dir + os.pathsep + current_path
 
 
 def _find_local_cli() -> Path | None:
@@ -370,7 +431,7 @@ class DimSimBridge(Module):
                     "Local DimSim not found. Expected DimSim/dimos-cli/cli.ts"
                 )
             logger.info(f"Using local DimSim: {cli_ts}")
-            return _find_deno(), ["run", "--allow-all", "--unstable-net", str(cli_ts)]
+            return _ensure_deno(), ["run", "--allow-all", "--unstable-net", str(cli_ts)]
 
         dimsim = _dimsim_bin()
         if dimsim.exists():
@@ -476,7 +537,7 @@ class DimSimBridge(Module):
                         logger.warning(f"Binary download failed ({exc}), trying deno fallback...")
 
             if not downloaded and not dimsim_path:
-                deno = shutil.which("deno") or str(Path.home() / ".deno" / "bin" / "deno")
+                deno = _ensure_deno()
                 logger.info("Installing dimsim via deno...")
                 subprocess.run(
                     [deno, "install", "-gAf", "--reload", "--unstable-net", "jsr:@antim/dimsim"],
