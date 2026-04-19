@@ -198,6 +198,9 @@ class TestDimSimCrossWall:
         # Separate publisher to avoid threading conflicts with handle_timeout
         lc_pub = lcmlib.LCM(lcm_url)
 
+        cmd_vel_count = 0
+        costmap_count = 0
+
         def _odom_handler(channel: str, data: bytes) -> None:
             nonlocal odom_count, robot_x, robot_y
             msg = PoseStamped.lcm_decode(data)
@@ -206,7 +209,19 @@ class TestDimSimCrossWall:
                 robot_x = msg.x
                 robot_y = msg.y
 
+        def _cmd_vel_handler(channel: str, data: bytes) -> None:
+            nonlocal cmd_vel_count
+            with lock:
+                cmd_vel_count += 1
+
+        def _costmap_handler(channel: str, data: bytes) -> None:
+            nonlocal costmap_count
+            with lock:
+                costmap_count += 1
+
         lc.subscribe(ODOM_TOPIC, _odom_handler)
+        lc.subscribe("/cmd_vel#geometry_msgs.Twist", _cmd_vel_handler)
+        lc.subscribe("/global_costmap#nav_msgs.OccupancyGrid", _costmap_handler)
 
         lcm_running = True
 
@@ -320,9 +335,12 @@ class TestDimSimCrossWall:
                         last_goal_pub = now
 
                     if now - last_print >= 5.0:
+                        with lock:
+                            cv, cm = cmd_vel_count, costmap_count
                         print(
                             f"[test]   {name}: {elapsed:.0f}s/{timeout_sec}s | "
-                            f"pos ({cx:.2f}, {cy:.2f}) | dist={dist:.2f}m"
+                            f"pos ({cx:.2f}, {cy:.2f}) | dist={dist:.2f}m | "
+                            f"cmd_vel={cv} costmap={cm}"
                         )
                         last_print = now
 
