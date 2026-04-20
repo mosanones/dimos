@@ -139,7 +139,7 @@ plot.to_svg("assets/plot_plantness.svg")
 ```
 Stream("color_image_embedded") | vector_search() | order_by(ts)
 Stream("cache")
-Stream("cache"): 267 items, 2025-12-26 11:09:11 — 2025-12-26 11:13:59 (288.4s)
+Stream("cache"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
 ```
 
 ![output](assets/plot_plantness.svg)
@@ -201,10 +201,10 @@ from dimos.memory2.vis.color import ColorRange
 from dimos.memory2.vis.plot.elements import VLine
 from dimos.memory2.vis.utils import mosaic
 
-peaks = plantness_query_cached.transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
+semantic_peaks = plantness_query_cached.transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
 
 peakColor = ColorRange("turbo")
-for i, p in enumerate(peaks):
+for i, p in enumerate(semantic_peaks):
     print(f"t={p.ts - plantness_similarity.first().ts:6.1f}s score={p.similarity:.3f} prominence={p.tags['peak_prominence']:.3f}")
     plot.add(VLine(p.ts, color=peakColor(i)))
 
@@ -216,7 +216,7 @@ moondream.start()
 
 # peaks is still a stream of image observations (with prominence and semantic similarity metadata)
 # so we can just draw it directly via mosaic that takes image streams
-m = mosaic(peaks.map_data(lambda obs: moondream.query_detections(obs.data, "plant")))
+m = mosaic(semantic_peaks.map_data(lambda obs: moondream.query_detections(obs.data, "plant")))
 
 m.data.save("assets/plants_auto.png")
 ```
@@ -225,16 +225,134 @@ m.data.save("assets/plants_auto.png")
 ```
 t=  14.1s score=0.224 prominence=0.031
 t=  26.3s score=0.225 prominence=0.033
+t=  32.7s score=0.224 prominence=0.022
 t=  37.0s score=0.259 prominence=0.067
 t=  60.6s score=0.227 prominence=0.031
+t=  61.5s score=0.218 prominence=0.026
 t=  76.3s score=0.221 prominence=0.031
+t=  84.0s score=0.223 prominence=0.027
+t=  89.1s score=0.219 prominence=0.020
 t= 162.9s score=0.224 prominence=0.041
 t= 168.0s score=0.219 prominence=0.031
+t= 172.4s score=0.218 prominence=0.020
 t= 240.4s score=0.243 prominence=0.047
+t= 245.6s score=0.224 prominence=0.028
 t= 279.6s score=0.230 prominence=0.030
 ```
 
 ![output](assets/plot_plantness_autopeaks.svg)
 ![output](assets/plants_auto.png)
 
-VLM didn't detect second image, should we have some brightness normalizer in the pipeline?
+
+# Which peaks are actually real?
+
+We got 15 peaks back but eyeballing the prominences, most sit around
+0.02–0.03 and only a couple (0.067 at t=37s, 0.047 at t=240s) really stand
+out. The `peaks(prominence=...)` floor is an *absolute* knob — pick it too
+low and noise leaks through, too high and faint peaks disappear, and the
+right value depends on the signal's range.
+
+`significant()` replaces that guesswork by thresholding on the
+*distribution of prominences* itself. Three methods:
+
+- `"mad"`  — outlier detection via median absolute deviation. Robust default.
+- `"otsu"` — 1D Otsu, classic bimodal split.
+- `"gap"`  — largest ratio gap between consecutive sorted prominences.
+
+```python session=robotdata
+from dimos.memory2.transform import significant
+
+t0 = plantness_similarity.first().ts
+
+for method in ("mad", "otsu", "gap"):
+    kept = list(semantic_peaks.transform(significant(method=method)))
+    stamps = ", ".join(f"{p.ts - t0:.0f}s" for p in kept)
+    print(f"{method:4s}: kept {len(kept):2d} / 15 → {stamps}")
+```
+
+<!--Result:-->
+```
+mad : kept  2 / 15 → 37s, 240s
+otsu: kept  3 / 15 → 37s, 163s, 240s
+gap : kept  1 / 15 → 37s
+```
+
+Put the surviving MAD peaks on the timeline:
+
+```python session=robotdata
+plot = Plot()
+plot.add(
+    plantness_similarity.transform(smooth_time(5.0)).transform(normalize()),
+    label="plant-ness", color=color.green, gap_fill=0.0, connect=7.5,
+)
+
+meaningful_peaks = semantic_peaks.transform(significant(method="mad"))
+
+for peak in meaningful_peaks:
+    plot.add(VLine(peak.ts, color=color.red))
+
+m = mosaic(meaningful_peaks)
+m.data.save("assets/plants_meaningful.png")
+
+plot.to_svg("assets/plot_plantness_significant.svg")
+```
+
+
+![output](assets/plot_plantness_significant.svg)
+
+![output](assets/plants_meaningful.png)
+
+Rule of thumb: keep a small absolute floor on `peaks(prominence=...)` to
+reject shape-noise, then let `significant()` pick the statistical cutoff.
+MAD is the safe default when you expect a few real peaks in a mostly-noisy
+signal; switch to Otsu if the distribution is visibly bimodal; avoid `gap`
+unless peaks are clearly separated from noise.
+
+# Localizing objects
+
+Let's focus on those two peaks. load all images in their vicinity
+
+```python session=robotdata
+
+from dimos.memory2.vis.space.space import Space
+from dimos.memory2.vis.space.elements import Point
+from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.memory2.transform import QualityWindow
+
+near_images = images.near(meaningful_peaks.first().pose_stamped, radius=2.5) \
+    .filter(lambda obs: obs.data.brightness > 0.1) \
+    .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+
+drawing = Space()
+
+# here we run our global mapper only on lidar frames around the POI
+drawing.add(
+   near_images.map(lambda obs: store.streams.lidar.at(obs.ts).last()) \
+   .transform(VoxelMapTransformer()) \
+   .last().data)
+
+drawing.add(near_images)
+drawing.add(meaningful_peaks.first().pose_stamped, color=color.green)
+
+detections = (near_images
+    .map_data(lambda obs: moondream.query_detections(obs.data, "plant"))
+    .filter(lambda obs: len(obs.data) > 0)
+    .cache())
+
+drawing.add(detections.map(lambda detection: Point(detection.pose_stamped, color=color.green)))
+
+drawing.to_svg("assets/peak_space.svg")
+
+m = mosaic(detections)
+m.data.save("assets/plants_peak_detections.png")
+
+
+```
+
+<!--Result:-->
+```
+08:45:35.360 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+```
+
+![output](assets/peak_space.svg)
+![output](assets/plants_peak_detections.png)

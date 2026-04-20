@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import inspect
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from dimos.memory2.utils.formatting import FilterRepr
 
@@ -166,7 +166,7 @@ def smooth(window: int) -> FnIterTransformer[float, float]:
 
 
 def peaks(
-    prominence: float = 0.03,
+    prominence: float = 0.02,
     distance: float = 5.0,
     width: float | None = 0.5,
     key: Callable[[Observation[T]], float] | None = None,
@@ -228,6 +228,108 @@ def peaks(
             yield items[int(i)].tag(peak_prominence=float(prom))
 
     return FnIterTransformer(_peaks)
+
+
+def _median(sorted_vals: list[float]) -> float:
+    n = len(sorted_vals)
+    return sorted_vals[n // 2] if n % 2 else 0.5 * (sorted_vals[n // 2 - 1] + sorted_vals[n // 2])
+
+
+def _mad_threshold(values: list[float], k: float) -> tuple[float, float, float]:
+    """Returns (threshold, median, scale) where scale = MAD * 1.4826."""
+    median = _median(sorted(values))
+    scale = _median(sorted(abs(v - median) for v in values)) * 1.4826
+    return median + k * scale, median, scale
+
+
+def _otsu_threshold(values: list[float]) -> float:
+    """1D Otsu threshold: maximizes between-class variance over the value list."""
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    total = sum(sorted_vals)
+    best_var, best_thresh = -1.0, sorted_vals[-1]
+    cum = 0.0
+    for i in range(n - 1):
+        cum += sorted_vals[i]
+        count = i + 1
+        w0, w1 = count / n, (n - count) / n
+        m0, m1 = cum / count, (total - cum) / (n - count)
+        var = w0 * w1 * (m0 - m1) ** 2
+        if var > best_var:
+            best_var, best_thresh = var, 0.5 * (sorted_vals[i] + sorted_vals[i + 1])
+    return best_thresh
+
+
+def _gap_threshold(values: list[float]) -> float:
+    """Largest log-ratio gap between consecutive sorted values."""
+    sorted_vals = sorted(v for v in values if v > 0)
+    n = len(sorted_vals)
+    best_ratio, best_idx = 0.0, n - 1
+    for i in range(n - 1):
+        ratio = sorted_vals[i + 1] / sorted_vals[i]
+        if ratio > best_ratio:
+            best_ratio, best_idx = ratio, i
+    return 0.5 * (sorted_vals[best_idx] + sorted_vals[best_idx + 1])
+
+
+def significant(
+    method: Literal["mad", "otsu", "gap"] = "mad",
+    k: float = 3.0,
+    tag: str = "peak_prominence",
+) -> FnIterTransformer[T, T]:
+    """Keep observations whose ``tags[tag]`` is an outlier in its own distribution.
+
+    Designed to chain after :func:`peaks` so the cutoff is *derived from the
+    prominence distribution itself*, invariant to overall signal range. The
+    upstream :func:`peaks` call still does the shape gating (``distance``,
+    ``width``, and a small ``prominence`` floor to reject obvious noise);
+    :func:`significant` then picks a statistical cutoff from what survives.
+
+    Each surviving observation gets ``tags["significance"]`` attached.
+
+    - ``method``:
+        - ``"mad"``: keep values above ``median + k * 1.4826 * MAD``. Robust
+          default; assumes most upstream values are noise. ``significance``
+          is the resulting (value - median) / scale, i.e. a robust z-score.
+        - ``"otsu"``: 1D Otsu — picks the threshold maximizing between-class
+          variance over the value distribution. Parameter-free; works when
+          the distribution is roughly bimodal. ``significance`` is value /
+          threshold.
+        - ``"gap"``: largest ratio gap between consecutive sorted values.
+          Crisp when peaks are well separated from noise, brittle otherwise
+          (a single tiny value at the bottom of the list can dominate).
+          ``significance`` is value / threshold.
+    - ``k``: only used by ``"mad"`` (≈3 ≙ 3-sigma equivalent).
+    - ``tag``: which tag holds the scalar to threshold on. Defaults to
+      ``peak_prominence`` (set by :func:`peaks`).
+    """
+    if method not in ("mad", "otsu", "gap"):
+        raise ValueError(f"unknown method {method!r}; expected 'mad', 'otsu', or 'gap'")
+
+    def _significant(upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+        items = list(upstream)
+        if len(items) < 2:
+            return
+        try:
+            values = [float(o.tags[tag]) for o in items]
+        except KeyError as e:
+            raise ValueError(
+                f"significant() requires upstream observations to be tagged with {tag!r}; "
+                f"chain after peaks() or set tag= to a tag that exists"
+            ) from e
+
+        if method == "mad":
+            threshold, median, scale = _mad_threshold(values, k)
+            for obs, val in zip(items, values, strict=True):
+                if val >= threshold and scale > 0:
+                    yield obs.tag(significance=(val - median) / scale)
+        else:
+            threshold = _otsu_threshold(values) if method == "otsu" else _gap_threshold(values)
+            for obs, val in zip(items, values, strict=True):
+                if val >= threshold:
+                    yield obs.tag(significance=val / threshold if threshold > 0 else 0.0)
+
+    return FnIterTransformer(_significant)
 
 
 def smooth_time(seconds: float) -> FnIterTransformer[float, float]:

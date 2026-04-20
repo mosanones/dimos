@@ -28,9 +28,10 @@ for name, stream in store.streams.items():
 
 <!--Result:-->
 ```
-Stream("color_image"): 4164 items, 2025-12-26 11:09:07 — 2025-12-26 11:13:59 (292.5s)
-Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:11 — 2025-12-26 11:13:59 (288.4s)
-Stream("lidar"): 2263 items, 2025-12-26 11:09:06 — 2025-12-26 11:14:00 (293.9s)
+Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
+Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
+Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s)
+Stream("odom"): 5465 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
 ```
 
 Any stream is drawable
@@ -179,7 +180,7 @@ drawing.to_svg("assets/embedding_focused.svg")
 <!--Result:-->
 ```
 Stream("color_image_embedded") | vector_search(k=30)
-11:09:59.238 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+08:19:54.129 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/embedding_focused.svg)

@@ -173,13 +173,39 @@ class SemanticSearch(MemoryModule):
 
     @rpc
     def start(self):
+        super().start()
+
         self.model = self.register_disposable(self.config.embedding_model())
+
         self.model.start()
+
+        self.embeddings = self.register_disposable(
+            self.store.stream("color_image_embedded", Image),
+        )
+
+        # fmt: off
+        self.register_disposable(
+            self._store.streams.color_image \
+               .live() \
+               .filter(lambda obs: obs.data.brightness > 0.1) \
+               .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
+               .transform(EmbedImages(clip, batch_size=2)) \
+               .save(self.embeddings) \
+               .drain())
+        # fmt: on
 
     @skill
     def search(self, query: str):
+        from dimos.memory2.transform import peaks
+
         query_vector = self.model.embed_text(query)
-        self.store.streams.color_image_embedded.search(query_vector)
+
+        # fmt: off
+        self.embeddings \
+            .search(query_vector) \
+            .transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
+        # fmt: on
+
         # TODO we want to cluster these by peaks
         # then we want to sort by time/distance depending on desired weight here..
 
@@ -227,11 +253,3 @@ class Recorder(Module):
                 Disposable(port.subscribe(lambda msg, s=stream: s.append(msg)))  # type: ignore[misc]
             )
             logger.info("Recording %s (%s)", name, port.type.__name__)
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-
-    def stop(self) -> None:
-        super().stop()
-        super().stop()
