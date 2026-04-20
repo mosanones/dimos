@@ -90,7 +90,7 @@ plot.to_svg("assets/plot_robot_data.svg")
 
 ![output](assets/plot_robot_data.svg)
 
-## Filling in gaps
+## Semantic search
 
 Let's find some plants!
 
@@ -144,7 +144,7 @@ Stream("cache"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
 
 ![output](assets/plot_plantness.svg)
 
-We can be pretty sure the robot saw some plants by peaks at beginning and end of data, but this looks trash, why?
+We can be pretty sure the robot saw some plants by peaks at beginning and end of data, but this graph doesn't look great, why?
 
 Embeddings are calculated according to some minimum picture brightness. Completely dark images are both useless and also semantically close to everything.
 
@@ -173,18 +173,20 @@ plot.to_svg("assets/plot_plantness_brightness.svg")
 ![output](assets/plot_plantness_brightness.svg)
 We see that stuff isn't embedded below some minimum brightness.
 
-Let's now fill the gaps in our semantic graph a bit, looks super ugly above, we will tell plotter to consider unmapped values as zero and connect values that are within 7.5 seconds
+Let's now fill the gaps in our semantic graph a bit, looks super ugly above, we will tell plotter to consider unmapped values as zero and connect values that are within 7.5 seconds, smooth with 5 second time window, and normalize the data
 
 ```python session=robotdata
 
 plot = Plot()
 
 plot.add(
-    plantness_similarity.transform(smooth_time(5.0)).transform(normalize()),
-    label="plant-ness",
-    color=color.green,
-    gap_fill=0.0,
-    connect=7.5
+    plantness_similarity \
+      .transform(smooth_time(5.0)) \
+      .transform(normalize()), \
+      label="plant-ness",
+      color=color.green,
+      gap_fill=0.0,
+      connect=7.5
 )
 
 plot.to_svg("assets/plot_plantness_gap_fill.svg")
@@ -194,6 +196,8 @@ plot.to_svg("assets/plot_plantness_gap_fill.svg")
 ![output](assets/plot_plantness_gap_fill.svg)
 
 Looks better, these are some very obvious peaks, I'm curious let's see what was captured then.
+
+Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
 ```python session=robotdata
 from dimos.memory2.transform import peaks
@@ -245,9 +249,7 @@ t= 279.6s score=0.230 prominence=0.030
 
 ## Which peaks are significant?
 
-We got 15 peaks back but eyeballing the prominences, most sit around
-0.02–0.03 and only a couple (0.067 at t=37s, 0.047 at t=240s) really stand
-out.
+We got 15 peaks back, we ran a detector on all of them so we can start projecting into 3D but let's say we want some sort of pre-filter of just globally significant peaks. we can see most peaks prominence sits around 0.02–0.03 and only a couple (0.067 at t=37s, 0.047 at t=240s) really stand out. We might want to auto detect those.
 
 `significant()` replaces that guesswork by thresholding on the distribution of prominences itself. Three methods:
 
@@ -273,7 +275,7 @@ otsu: kept  3 / 15 → 37s, 163s, 240s
 gap : kept  1 / 15 → 37s
 ```
 
-Put the surviving MAD peaks on the timeline:
+Put the surviving MAD peaks on the timeline we get two very obvious plants.
 
 ```python session=robotdata
 plot = Plot()
@@ -304,11 +306,11 @@ MAD is the safe default when you expect a few real peaks in a mostly-noisy
 signal; switch to Otsu if the distribution is visibly bimodal; avoid `gap`
 unless peaks are clearly separated from noise.
 
-## Localizing objects
+## 3D Projection
 
 Let's focus on those two peaks. load all images in the vicinity of a detection,
 
-Reconstruct a global map for that area
+We'll also pull all lidar frames in their vicinity and reconstruct global maps for those areas.
 
 ```python session=robotdata
 
@@ -317,26 +319,32 @@ from dimos.memory2.vis.space.elements import Point
 from dimos.mapping.voxels import VoxelMapTransformer
 from dimos.memory2.transform import QualityWindow
 
+drawing = Space()
+
 meaningful_peak = meaningful_peaks.first()
+
+# we load all images captured in the readius around the semantic peak
 near_images = images.near(meaningful_peak.pose_stamped, radius=2.5) \
     .filter(lambda obs: obs.data.brightness > 0.1) \
     .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
 
-drawing = Space()
-
-global_map = near_images.map(lambda obs: store.streams.lidar.at(obs.ts).last()) \
+# we load all lidar frames captured in the readius around the semantic peak
+# feed them into a global mapper to get a single pointcloud around our area of interest
+global_map = store.streams.lidar.near(meaningful_peak.pose_stamped, radius=2.5) \
    .transform(VoxelMapTransformer()) \
    .last().data
 
 # here we run our global mapper only on lidar frames around the POI
 drawing.add(global_map)
-drawing.add(near_images)
 drawing.add(meaningful_peak.pose_stamped, color=color.green)
 
 detections = (near_images
     .map_data(lambda obs: moondream.query_detections(obs.data, "plant"))
+    .map_data(lambda obs: obs.data.filter(lambda det: det.bbox_2d_volume() > 3000))
     .filter(lambda obs: len(obs.data) > 0)
     .cache())
+
+drawing.add(detections)
 
 drawing.to_svg("assets/peak_space.svg")
 
@@ -346,7 +354,7 @@ m.data.save("assets/plants_peak_detections.png")
 
 <!--Result:-->
 ```
-10:28:36.905 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+14:27:41.589 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/peak_space.svg)
@@ -355,7 +363,9 @@ m.data.save("assets/plants_peak_detections.png")
 ## 3D Projection
 
 ```python session=robotdata output=none
-from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.detection.type.detection3d.imageDetections3DPC import (
+    ImageDetections3DPC,
+)
 from dimos.robot.unitree.go2.connection import (
     _camera_info_static as go2_camerainfo,
     BASE_TO_OPTICAL,
@@ -365,6 +375,8 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
+# TODO We need a nicer way to get optical transform for image streams
+# depending on the source
 def world_to_optical(base_pose):
     return -(Transform.from_pose("base_link", base_pose) + BASE_TO_OPTICAL)
 
@@ -377,23 +389,24 @@ drawing.add(detections)
 camera_info = go2_camerainfo()
 
 detections3d = (detections
-    .map_data(lambda obs: Detection3DPC.from_2d(
-        obs.data[0],
+    .map_data(lambda obs: ImageDetections3DPC.from_2d(
+        obs.data,
         global_map,
         camera_info,
         world_to_optical(obs.pose_stamped),
     ))
-    .filter(lambda obs: obs.data is not None))
+    .filter(lambda obs: len(obs.data) > 0))
 
 # TODO detection3d needs to be a natural thing to render
 for obs in detections3d:
-    aabb = obs.data.get_bounding_box()
-    c, e = aabb.get_center(), aabb.get_extent()
-    drawing.add(Box3D(
-        center=Pose(float(c[0]), float(c[1]), float(c[2])),
-        size=Vector3(float(e[0]), float(e[1]), float(e[2])),
-        color=color.green, label="plant",
-    ))
+    for d3d in obs.data:
+        aabb = d3d.get_bounding_box()
+        c, e = aabb.get_center(), aabb.get_extent()
+        drawing.add(Box3D(
+            center=Pose(float(c[0]), float(c[1]), float(c[2])),
+            size=Vector3(float(e[0]), float(e[1]), float(e[2])),
+            color=color.green, label="plant",
+        ))
 
 drawing.to_svg("assets/peak_detections.svg")
 

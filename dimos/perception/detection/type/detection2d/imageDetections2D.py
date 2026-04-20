@@ -34,6 +34,20 @@ T2D = TypeVar("T2D", bound=Detection2D, default=Detection2DBBox)
 
 
 class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
+    def filter(self, mapper):
+        """Filter detections using a mapper function.
+
+        Args:
+            mapper: A function that takes a Detection2D and returns a bool indicating
+                whether to keep the detection.
+
+        Returns:
+            A new ImageDetections2D object containing only the detections for which
+            the mapper returned True.
+        """
+        filtered_detections = [det for det in self.detections if mapper(det)]
+        return ImageDetections2D(image=self.image, detections=filtered_detections)
+
     @classmethod
     def from_ros_detection2d_array(
         cls,
