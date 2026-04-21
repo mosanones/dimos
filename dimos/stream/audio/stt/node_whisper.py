@@ -38,7 +38,6 @@ except ImportError:
         logger.warn(
             "openai-whisper not installed, falling back to faster-whisper. "
             "Install openai-whisper for the full backend: pip install openai-whisper",
-            stacklevel=2,
         )
         _USE_FASTER_WHISPER = True
     except ImportError:
