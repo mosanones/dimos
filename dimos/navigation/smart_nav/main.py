@@ -271,8 +271,18 @@ def smart_nav_rerun_config(
     visual_override = dict(resolved["visual_override"])
     visual_override.setdefault("world/sensor_scan", _sensor_scan_override)
     visual_override.setdefault("world/terrain_map", _terrain_map_override)
-    visual_override.setdefault("world/terrain_map_ext", _terrain_map_ext_override)
+    # terrain_map_ext is the persistent accumulator of the same terrain data,
+    # so reuse the warm (yellow → red) gradient for visual consistency.
+    visual_override.setdefault("world/terrain_map_ext", _terrain_map_override)
     visual_override.setdefault("world/global_map", _global_map_override)
+    # Common remapped names: PGO renames to global_map_pgo (in smart_nav itself),
+    # FastLio2's global_map is typically remapped to global_map_fastlio to avoid
+    # the collision. Register both so the cool palette applies either way.
+    visual_override.setdefault("world/global_map_pgo", _global_map_override)
+    visual_override.setdefault("world/global_map_fastlio", _global_map_override)
+    # registered_scan is the live lidar scan consumed by smart_nav; share the
+    # global_map's blue → green gradient so SLAM-space data reads as one family.
+    visual_override.setdefault("world/registered_scan", _global_map_override)
     visual_override.setdefault("world/explored_areas", _explored_areas_override)
     visual_override.setdefault("world/preloaded_map", _preloaded_map_override)
     visual_override.setdefault("world/trajectory", _trajectory_override)
@@ -301,6 +311,7 @@ def smart_nav_rerun_config(
 # Small lifts prevent z-fighting with the terrain/floor plane.
 _VIS_LIFT = 0.3  # default lift for nav markers (goals, paths, boundaries)
 _VIS_LIFT_TRAJECTORY = 0.05  # trajectory breadcrumbs sit just above the floor
+_VIS_LIFT_COSTMAP = 0.2  # lift costmap cells clear of terrain/obstacle clouds
 
 # Agentic debug mode lifts nav elements high above the scene so they're
 # visible from a top-down camera even when terrain occludes them.
@@ -323,16 +334,12 @@ def _sensor_scan_override(cloud: Any) -> Any:
 
 
 def _global_map_override(cloud: Any) -> Any:
-    """Render accumulated global map — small grey/blue points for map context."""
-    return cloud.to_rerun(colormap="cool", size=0.03)
+    """Render accumulated global map with a blue→green gradient by z-height.
 
-
-def _terrain_map_override(cloud: Any) -> Any:
-    """Render terrain_map: big green dots = traversable, red = obstacle.
-
-    The terrain_analysis C++ module sets point intensity to the height
-    difference above the planar voxel ground. Low intensity → ground,
-    high intensity → obstacle.
+    Cool half (deep blue → green, passing through teal) keeps the room map
+    visually separated from the terrain_map's warm half (yellow → red).
+    Shared across `world/global_map`, `world/global_map_pgo`, and
+    `world/global_map_fastlio` so every SLAM/PGO map uses the same palette.
     """
     import numpy as np
     import rerun as rr
@@ -341,15 +348,46 @@ def _terrain_map_override(cloud: Any) -> Any:
     if len(points) == 0:
         return None
 
-    # Color by z-height: low = green (ground), high = red (obstacle)
     z = points[:, 2]
     z_min, z_max = z.min(), z.max()
     z_norm = (z - z_min) / (z_max - z_min + 1e-8)
 
+    # Low z  = deep blue  (30, 80, 200)
+    # High z = vivid green (60, 220, 100)
     colors = np.zeros((len(points), 3), dtype=np.uint8)
-    colors[:, 0] = (z_norm * 255).astype(np.uint8)  # R
-    colors[:, 1] = ((1 - z_norm) * 200 + 55).astype(np.uint8)  # G
-    colors[:, 2] = 30
+    colors[:, 0] = (30 + z_norm * 30).astype(np.uint8)
+    colors[:, 1] = (80 + z_norm * 140).astype(np.uint8)
+    colors[:, 2] = (200 - z_norm * 100).astype(np.uint8)
+
+    return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.03)
+
+
+def _terrain_map_override(cloud: Any) -> Any:
+    """Render terrain_map with a lavender → magenta gradient by z-height.
+
+    The terrain_analysis C++ module sets point intensity to the height
+    difference above the planar voxel ground. Low z → ground (pale lavender),
+    high z → obstacle (vivid magenta). Magenta/purple slice keeps terrain
+    visually distinct from both global_map (blue → green) and any
+    yellow/red elements.
+    """
+    import numpy as np
+    import rerun as rr
+
+    points, _ = cloud.as_numpy()
+    if len(points) == 0:
+        return None
+
+    z = points[:, 2]
+    z_min, z_max = z.min(), z.max()
+    z_norm = (z - z_min) / (z_max - z_min + 1e-8)
+
+    # Low z  = pale lavender (200, 160, 240)
+    # High z = vivid magenta (255, 40, 180)
+    colors = np.zeros((len(points), 3), dtype=np.uint8)
+    colors[:, 0] = (200 + z_norm * 55).astype(np.uint8)
+    colors[:, 1] = (160 - z_norm * 120).astype(np.uint8)
+    colors[:, 2] = (240 - z_norm * 60).astype(np.uint8)
 
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.08)
 
@@ -358,6 +396,9 @@ def _costmap_cloud_override(cloud: Any) -> Any:
     """Render SimplePlanner's costmap_cloud — the blocked grid cells
     (with inflation) that A* actually treats as obstacles. Big red
     boxes so they pop against the terrain clouds.
+
+    Lifted above ground so the costmap cells aren't buried under the
+    terrain/obstacle clouds that share the same z-range.
     """
     import numpy as np
     import rerun as rr
@@ -365,8 +406,10 @@ def _costmap_cloud_override(cloud: Any) -> Any:
     points, _ = cloud.as_numpy()
     if len(points) == 0:
         return None
+    lifted = points[:, :3].copy()
+    lifted[:, 2] += _VIS_LIFT_COSTMAP
     colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
-    return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.12)
+    return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
 
 
 def _obstacle_cloud_override(cloud: Any) -> Any:
@@ -409,11 +452,6 @@ def _trajectory_override(cloud: Any) -> Any:
     ]
 
 
-def _terrain_map_ext_override(cloud: Any) -> Any:
-    """Render extended terrain map — persistent accumulated cloud."""
-    return cloud.to_rerun(colormap="viridis", size=0.06)
-
-
 def _path_override(path_msg: Any) -> Any:
     """Render path in vehicle frame by attaching to the sensor TF."""
     import rerun as rr
@@ -450,7 +488,11 @@ def _goal_path_override(path_msg: Any) -> Any:
 
 
 def _waypoint_override(msg: Any) -> Any:
-    """Render the current waypoint goal as a visible marker."""
+    """Render the current waypoint goal as a visible marker.
+
+    Orange + slightly smaller than the goal sphere so the final goal
+    stays the larger, dominant marker.
+    """
     import math
 
     import rerun as rr
@@ -460,13 +502,13 @@ def _waypoint_override(msg: Any) -> Any:
 
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z + _VIS_LIFT]],
-        colors=[(255, 50, 50)],
-        radii=0.4,
+        colors=[(255, 140, 0)],
+        radii=0.22,
     )
 
 
 def _goal_override(msg: Any) -> Any:
-    """Render the current navigation goal as a large purple sphere."""
+    """Render the current navigation goal as a purple sphere."""
     import math
 
     import rerun as rr
@@ -477,7 +519,7 @@ def _goal_override(msg: Any) -> Any:
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z + _VIS_LIFT]],
         colors=[(180, 60, 220)],
-        radii=0.6,
+        radii=0.3,
     )
 
 
@@ -492,12 +534,18 @@ def _free_paths_override(cloud: Any) -> Any:
 
 
 def _static_floor(rr: Any) -> list[Any]:
-    """Static ground plane at z=0 as a solid textured quad."""
+    """Static ground plane as a solid textured quad.
+
+    Dropped 0.2 m below z=0 so lidar points that land right at ground height
+    (low-obstacle edges, ground classifications) stay visible instead of
+    getting z-fought / occluded by the floor quad.
+    """
 
     s = 50.0  # half-size
+    z = -0.2
     return [
         rr.Mesh3D(
-            vertex_positions=[[-s, -s, 0], [s, -s, 0], [s, s, 0], [-s, s, 0]],
+            vertex_positions=[[-s, -s, z], [s, -s, z], [s, s, z], [-s, s, z]],
             triangle_indices=[[0, 1, 2], [0, 2, 3]],
             vertex_colors=[[40, 40, 40, 120]] * 4,
         )
@@ -518,8 +566,8 @@ def _waypoint_override_debug(msg: Any) -> Any:
 
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z + _AGENTIC_DEBUG_LIFT]],
-        colors=[(255, 50, 50)],
-        radii=0.4,
+        colors=[(255, 140, 0)],
+        radii=0.22,
     )
 
 
@@ -535,7 +583,7 @@ def _goal_override_debug(msg: Any) -> Any:
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z + _AGENTIC_DEBUG_LIFT]],
         colors=[(180, 60, 220)],
-        radii=0.6,
+        radii=0.3,
     )
 
 
