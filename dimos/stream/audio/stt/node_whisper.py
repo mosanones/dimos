@@ -25,6 +25,8 @@ from dimos.stream.audio.base import (
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
 
+logger = setup_logger()
+
 try:
     import whisper  # type: ignore[import-untyped]
 
@@ -33,9 +35,9 @@ except ImportError:
     try:
         from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
-        warnings.warn(
+        logger.warn(
             "openai-whisper not installed, falling back to faster-whisper. "
-            "Install openai-whisper for the full backend: pip install dimos[whisper]",
+            "Install openai-whisper for the full backend: pip install openai-whisper",
             stacklevel=2,
         )
         _USE_FASTER_WHISPER = True
@@ -45,8 +47,6 @@ except ImportError:
             "Install faster-whisper (pip install faster-whisper) "
             "or openai-whisper (pip install dimos[whisper])."
         )
-
-logger = setup_logger()
 
 
 class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
