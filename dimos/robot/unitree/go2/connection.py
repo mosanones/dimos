@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import sys
 from threading import Thread
 import time
@@ -32,6 +31,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.spec.perception import Camera, Pointcloud
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
@@ -53,7 +53,7 @@ if sys.version_info < (3, 13):
 else:
     from typing import TypeVar
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class ConnectionConfig(ModuleConfig):

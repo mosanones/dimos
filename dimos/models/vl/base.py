@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
-import logging
 from typing import Any
 import warnings
 
@@ -15,8 +14,9 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import retry
 from dimos.utils.llm_utils import extract_json
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 class Captioner(ABC):
     """Interface for models that can generate image captions."""
