@@ -8,14 +8,17 @@
     livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
     livox-sdk.inputs.flake-utils.follows = "flake-utils";
     livox-sdk.inputs.lcm-extended.follows = "lcm-extended";
+    # LCM message definitions (C headers) — non-flake, fetched as source only
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
+    # FAST-LIO2 source (Dimensional fork with LCM transport patches) — non-flake
     fast-lio = {
       url = "github:dimensionalOS/dimos-module-fastlio2/main";
       flake = false;
     };
+    # LCM library with extended features (multi-URL, etc.) — fork until changes land upstream
     lcm-extended = {
       url = "github:jeff-hykin/lcm_extended";
       inputs.nixpkgs.follows = "nixpkgs";

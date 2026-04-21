@@ -30,12 +30,10 @@ quaternion):
 
 Rerun visualization renders as ``rr.Points3D`` with type-based coloring.
 
-Why ``msgs/nav_msgs/``?
+Why ``msgs/smart_nav_msgs/``?
     The transport layer discovers message types by their ``msg_name`` attribute
-    (here ``"nav_msgs.GraphNodes3D"``).  Stream auto-connection and LCM topic
-    resolution depend on this module living under ``msgs/nav_msgs/`` so that
-    the ``Out[GraphNodes3D]`` streams declared in ``far_planner.py`` are wired
-    correctly.
+    (here ``"smart_nav_msgs.GraphNodes3D"``).  These are custom DimOS types
+    (not standard ROS nav_msgs) so they live under ``msgs/smart_nav_msgs/``.
 
 See also:
     - ``ContourPolygons3D`` — contour polygons (``sensor_msgs/PointCloud2``)
@@ -105,7 +103,7 @@ class GraphNodes3D(Timestamped):
     type map).  The other quaternion components (x, y, z) are unused.
     """
 
-    msg_name = "nav_msgs.GraphNodes3D"
+    msg_name = "smart_nav_msgs.GraphNodes3D"
     ts: float
     frame_id: str
     nodes: list[GraphNode]

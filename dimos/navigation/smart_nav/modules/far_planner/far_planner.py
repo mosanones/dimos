@@ -32,9 +32,9 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.ContourPolygons3D import ContourPolygons3D
-from dimos.msgs.nav_msgs.GraphNodes3D import GraphNodes3D
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.msgs.smart_nav_msgs.ContourPolygons3D import ContourPolygons3D
+from dimos.msgs.smart_nav_msgs.GraphNodes3D import GraphNodes3D
+from dimos.msgs.smart_nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

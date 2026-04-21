@@ -22,12 +22,10 @@ C++ binary (``far_planner_node``).  The C++ side encodes contour polygon data as
 field to encode its polygon id (not a real intensity value).  The Python side
 groups points by id and renders polygon outlines via ``rr.LineStrips3D``.
 
-Why ``msgs/nav_msgs/``?
+Why ``msgs/smart_nav_msgs/``?
     The transport layer discovers message types by their ``msg_name`` attribute
-    (here ``"nav_msgs.ContourPolygons3D"``).  Stream auto-connection and LCM
-    topic resolution depend on this module living under ``msgs/nav_msgs/`` so
-    that the ``Out[ContourPolygons3D]`` streams declared in
-    ``far_planner.py`` are wired correctly.
+    (here ``"smart_nav_msgs.ContourPolygons3D"``).  These are custom DimOS types
+    (not standard ROS nav_msgs) so they live under ``msgs/smart_nav_msgs/``.
 
 See also:
     - ``GraphNodes3D`` — graph node positions (same pattern, ``nav_msgs/Path``)
@@ -57,7 +55,7 @@ class ContourPolygons3D(Timestamped):
     **repurposed** to encode its polygon id (not a real intensity value).
     """
 
-    msg_name = "nav_msgs.ContourPolygons3D"
+    msg_name = "smart_nav_msgs.ContourPolygons3D"
     ts: float
     frame_id: str
     _raw_bytes: bytes | None  # store raw LCM bytes to preserve intensity

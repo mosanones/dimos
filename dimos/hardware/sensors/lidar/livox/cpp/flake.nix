@@ -4,10 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # LCM message definitions (C headers) — non-flake, fetched as source only
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
+    # LCM library with extended features (multi-URL, etc.) — fork until changes land upstream
     lcm-extended = {
       url = "github:jeff-hykin/lcm_extended";
       inputs.nixpkgs.follows = "nixpkgs";

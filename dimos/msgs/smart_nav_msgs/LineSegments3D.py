@@ -29,12 +29,10 @@ NOT a valid quaternion):
 Rerun visualization renders as ``rr.LineStrips3D`` color-coded by
 traversability (green / yellow / red).
 
-Why ``msgs/nav_msgs/``?
+Why ``msgs/smart_nav_msgs/``?
     The transport layer discovers message types by their ``msg_name`` attribute
-    (here ``"nav_msgs.LineSegments3D"``).  Stream auto-connection and LCM topic
-    resolution depend on this module living under ``msgs/nav_msgs/`` so that
-    the ``Out[LineSegments3D]`` streams declared in ``far_planner.py`` are
-    wired correctly.
+    (here ``"smart_nav_msgs.LineSegments3D"``).  These are custom DimOS types
+    (not standard ROS nav_msgs) so they live under ``msgs/smart_nav_msgs/``.
 
 See also:
     - ``GraphNodes3D`` — graph node positions (same ``nav_msgs/Path`` pattern)
@@ -69,7 +67,7 @@ class LineSegments3D(Timestamped):
     quaternion components (x, y, z) are unused.
     """
 
-    msg_name = "nav_msgs.LineSegments3D"
+    msg_name = "smart_nav_msgs.LineSegments3D"
     ts: float
     frame_id: str
     _segments: list[tuple[tuple[float, float, float], tuple[float, float, float]]]
