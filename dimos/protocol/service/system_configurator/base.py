@@ -72,6 +72,9 @@ class SystemConfigurator(ABC):
         """Apply fixes (may attempt sudo, catch, and apply fallback measures if needed)."""
         raise NotImplementedError
 
+    def accept_current(self) -> None:  # noqa: B027
+        """Called when the user declines the fix. Save current state so we don't re-prompt."""
+
 
 # generic enforcement of system configs
 
@@ -99,6 +102,8 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
     if not prompt.confirm("\nApply these changes now?"):
         if any(check.critical for check in failing):
             raise SystemExit(1)
+        for check in failing:
+            check.accept_current()
         return
 
     for check in failing:

@@ -414,18 +414,35 @@ class TestBufferConfiguratorMacOS:
             saved = json.loads(conf.read_text())
             assert saved["kern.ipc.maxsockbuf"] == 16000000
 
-    def test_fix_stops_at_current_value(self) -> None:
+    def test_fix_stops_at_current_value_and_saves_current(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
         configurator = BufferConfiguratorMacOS()
         configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 32000000)]
         with (
+            patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
             patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
-            patch("dimos.protocol.service.system_configurator.lcm._save_sysctl_conf"),
         ):
             # All attempts fail — should stop when halved below current (32M)
             mock_write.side_effect = subprocess.CalledProcessError(1, "sysctl")
             configurator.fix()
             # 64M fails, 32M == current → stops
             assert mock_write.call_count == 1
+            # Should save current value so it doesn't re-prompt
+            saved = json.loads(conf.read_text())
+            assert saved["kern.ipc.maxsockbuf"] == 32000000
+
+    def test_accept_current_saves_current_values(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
+        configurator = BufferConfiguratorMacOS()
+        configurator.needs = [
+            ("kern.ipc.maxsockbuf", 67108864, 33554432),
+            ("net.inet.udp.recvspace", 67108864, 33554432),
+        ]
+        with patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf):
+            configurator.accept_current()
+            saved = json.loads(conf.read_text())
+            assert saved["kern.ipc.maxsockbuf"] == 33554432
+            assert saved["net.inet.udp.recvspace"] == 33554432
 
 
 # MaxFileConfiguratorMacOS tests
