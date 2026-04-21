@@ -61,6 +61,8 @@ jobs:
         if: github.event_name == 'push' && !cancelled()
         uses: codecov/codecov-action@v5
         with:
+          disable_search: true
+          fail_ci_if_error: true
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
 
