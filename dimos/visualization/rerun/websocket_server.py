@@ -37,8 +37,10 @@ from typing import Any
 
 from pydantic import BaseModel
 import websockets
+import websockets.asyncio.server as ws_server
 
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -76,9 +78,7 @@ class CmdVelScaling(BaseModel):
 
 
 class Config(ModuleConfig):
-    # Intentionally binds 0.0.0.0 by default so the viewer can connect from
-    # any machine on the network (the typical robot deployment scenario).
-    host: str = "0.0.0.0"
+    host: str = ""  # empty → resolved at start() from global_config.listen_host
     port: int = 3030
     start_timeout: float = 10.0  # seconds to wait for the server to bind
     cmd_vel_scaling: CmdVelScaling = CmdVelScaling()
@@ -115,6 +115,9 @@ class RerunWebSocketServer(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        if not self.config.host:
+            self.config.host = global_config.listen_host
+        self._server_ready = threading.Event()
         self._server_thread = threading.Thread(
             target=self._run_server, daemon=True, name="rerun-ws-server"
         )
@@ -149,8 +152,9 @@ class RerunWebSocketServer(Module):
 
         local_ips = get_local_ips()
         hostname = socket.gethostname()
-        ws_url = f"ws://127.0.0.1:{self.config.port}/ws"
-        grpc_url = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
+        host = self.config.host
+        ws_url = f"ws://{host}:{self.config.port}/ws"
+        grpc_url = f"rerun+http://{host}:{RERUN_GRPC_PORT}/proxy"
 
         lines = [
             "",
@@ -188,8 +192,6 @@ class RerunWebSocketServer(Module):
             self._ws_loop.close()
 
     async def _serve(self) -> None:
-        import websockets.asyncio.server as ws_server
-
         self._stop_event = asyncio.Event()
 
         # Filter out handshake failures from port scanners / gRPC probes /
@@ -244,7 +246,6 @@ class RerunWebSocketServer(Module):
                 ts=float(msg.get("timestamp_ms", 0)) / 1000.0,
                 frame_id=str(msg.get("entity_path", "")),
             )
-            logger.debug(f"RerunWebSocketServer: click → {pt}")
             self.clicked_point.publish(pt)
 
         elif msg_type == "twist":
@@ -261,15 +262,13 @@ class RerunWebSocketServer(Module):
                     float(msg.get("angular_z", 0)) * s.yaw,
                 ),
             )
-            logger.debug(f"RerunWebSocketServer: twist → {twist}")
             self.tele_cmd_vel.publish(twist)
 
         elif msg_type == "stop":
-            logger.debug("RerunWebSocketServer: stop")
             self.tele_cmd_vel.publish(Twist.zero())
 
         elif msg_type == "heartbeat":
-            logger.debug(f"RerunWebSocketServer: heartbeat ts={msg.get('timestamp_ms')}")
+            pass
 
         else:
             logger.warning(f"RerunWebSocketServer: unknown message type {msg_type!r}")
