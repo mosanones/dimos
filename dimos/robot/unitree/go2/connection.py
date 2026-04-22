@@ -13,40 +13,51 @@
 # limitations under the License.
 
 import logging
+import sys
 from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
-from dimos import spec
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.spec.perception import Camera, Pointcloud
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
+
 logger = logging.getLogger(__name__)
+
+
+class ConnectionConfig(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -134,12 +145,12 @@ class ReplayConnection(UnitreeWebRTCConnection):
     @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
         lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")  # type: ignore[var-annotated]
-        return lidar_store.stream(**self.replay_config)  # type: ignore[arg-type]
+        return lidar_store.stream(**self.replay_config)
 
     @simple_mcache
     def odom_stream(self):  # type: ignore[no-untyped-def]
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")  # type: ignore[var-annotated]
-        return odom_store.stream(**self.replay_config)  # type: ignore[arg-type]
+        return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
     @simple_mcache
@@ -159,8 +170,8 @@ class ReplayConnection(UnitreeWebRTCConnection):
             arr = x.to_ndarray(format="rgb24") if hasattr(x, "to_ndarray") else x
             return Image.from_numpy(arr, format=ImageFormat.RGB, frame_id="camera_optical")
 
-        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)  # type: ignore[var-annotated]
-        return video_store.stream(**self.replay_config)  # type: ignore[arg-type]
+        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)
+        return video_store.stream(**self.replay_config)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
@@ -170,7 +181,11 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
-class GO2Connection(Module, spec.Camera, spec.Pointcloud):
+_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
+
+
+class GO2Connection(Module, Camera, Pointcloud):
+    config: ConnectionConfig
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -180,7 +195,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
-    _global_config: GlobalConfig
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
 
@@ -194,22 +208,12 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             ),
         ]
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        ip: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args,
-        **kwargs,
-    ) -> None:
-        self._global_config = cfg
-
-        ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection = make_connection(ip, self._global_config)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.connection = make_connection(self.config.ip, self.config.g)
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
-
-        Module.__init__(self, *args, **kwargs)
 
     @rpc
     def record(self, recording_name: str) -> None:
@@ -225,17 +229,18 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     @rpc
     def start(self) -> None:
         super().start()
-
+        if not hasattr(self, "connection"):
+            return
         self.connection.start()
 
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
             self._latest_video_frame = image
 
-        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
-        self._disposables.add(self.connection.video_stream().subscribe(onimage))
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
+        self.register_disposable(self.connection.video_stream().subscribe(onimage))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self._camera_info_thread = Thread(
             target=self.publish_camera_info,
@@ -246,7 +251,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
-        self.connection.set_obstacle_avoidance(self._global_config.obstacle_avoidance)
+        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
 
@@ -258,7 +263,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             self.connection.stop()
 
         if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=1.0)
+            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -333,13 +338,10 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         return self._latest_video_frame
 
 
-go2_connection = GO2Connection.blueprint
-
-
 def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
-    connection = dimos.deploy(GO2Connection, ip)  # type: ignore[attr-defined]
+    connection = dimos.deploy(GO2Connection, ip=ip)
 
     connection.pointcloud.transport = pSHMTransport(
         f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
@@ -354,6 +356,3 @@ def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy"
     connection.start()
 
     return connection
-
-
-__all__ = ["GO2Connection", "deploy", "go2_connection", "make_connection"]

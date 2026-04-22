@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.core.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.blueprint.dot import LayoutAlgo
     from dimos.core.introspection.module.info import ModuleInfo
 
@@ -44,7 +44,7 @@ def to_svg(
         show_disconnected: If True, show streams with no matching counterpart (blueprints only).
     """
     # Avoid circular imports by importing here
-    from dimos.core.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
 
     if isinstance(target, ModuleInfo):
