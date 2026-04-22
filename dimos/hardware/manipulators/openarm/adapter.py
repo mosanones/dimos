@@ -361,7 +361,9 @@ class OpenArmAdapter:
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
         # MIT velocity tracking: kp=0, send dq directly, anchor q at the
-        # last-commanded position so the motor doesn't drift.
+        # last-commanded position so the motor doesn't drift. Gravity
+        # feedforward is still needed — with kp=0 the only restoring force
+        # is damping, so without tau_ff the arm droops under its own weight.
         if self._bus is None or not self._enabled:
             return False
         if len(velocities) != self._dof:
@@ -369,9 +371,11 @@ class OpenArmAdapter:
         if self._last_cmd_q is None:
             self._last_cmd_q = self.read_joint_positions()
         anchor = self._last_cmd_q
+        q_current = self.read_joint_positions()
+        tau_ff = self._compute_gravity_torques(q_current)
         commands = [
-            (q_anchor, dq, 0.0, kd, 0.0)
-            for q_anchor, dq, kd in zip(anchor, velocities, self._kd)
+            (q_anchor, dq, 0.0, kd, tau)
+            for q_anchor, dq, kd, tau in zip(anchor, velocities, self._kd, tau_ff)
         ]
         self._bus.send_mit_many(commands)
         return True
