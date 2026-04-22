@@ -83,18 +83,6 @@ class CmdVelMux(Module):
         # generation doesn't match — a cheap fix for stale Timer callbacks.
         self._timer_gen = 0
 
-    def __getstate__(self) -> dict[str, Any]:
-        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
-        state.pop("_lock", None)
-        state.pop("_timer", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self._lock = threading.Lock()
-        self._timer = None
-        self._timer_gen = 0
-
     def __del__(self) -> None:
         # Cancel any pending cooldown timer so the daemon thread doesn't
         # outlive the mux and trip pytest's thread-leak detector.
