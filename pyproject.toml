@@ -89,6 +89,7 @@ dependencies = [
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
+    "rpyc>=6.0.0",
 ]
 
 
@@ -339,7 +340,7 @@ docker = [
 ]
 
 base = [
-    "dimos[agents,web,perception,visualization,sim]",
+    "dimos[agents,web,perception,visualization]",
 ]
 
 [tool.uv]
@@ -414,6 +415,8 @@ module = [
     "plum.*",
     "portal",
     "psutil",
+    "rpyc",
+    "rpyc.*",
     "pycuda",
     "pycuda.*",
     "pydrake",
@@ -428,11 +431,14 @@ module = [
     "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
+    "transformers",
+    "transformers.*",
     "torchreid",
     "turbojpeg",
     "ultralytics.*",
     "unitree_webrtc_connect.*",
     "xarm.*",
+    "ament_index_python.*",
 ]
 ignore_missing_imports = true
 
