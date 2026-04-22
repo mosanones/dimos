@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 Usage::
 
-    from dimos.utils.prompt import confirm, sudo_prompt
+    from dimos.utils.prompt import confirm, sudo_prompt, sudo_run
 
     if confirm("Apply these changes now?", question_id="autoconf"):
         ...
@@ -25,6 +25,8 @@ Usage::
         # sudo credentials are now cached
         subprocess.run(["sudo", "route", "add", ...])
 
+    sudo_run("sysctl", "-w", "net.core.rmem_max=67108864", check=True)
+
 When running inside ``dio`` (the DimOS TUI), prompts are rendered as
 modal popups.  Otherwise styled terminal prompts are shown via *rich*.
 """
@@ -32,6 +34,7 @@ modal popups.  Otherwise styled terminal prompts are shown via *rich*.
 from __future__ import annotations
 
 import getpass
+import os
 import subprocess
 import sys
 import threading
@@ -163,6 +166,17 @@ def sudo_prompt(message: str = "sudo password required") -> bool:
         return False
 
     return _terminal_sudo(message)
+
+
+def sudo_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Run a command, prepending sudo if not already root."""
+    try:
+        is_root = os.geteuid() == 0
+    except AttributeError:
+        is_root = False
+    if is_root:
+        return subprocess.run(list(args), **kwargs)
+    return subprocess.run(["sudo", *args], **kwargs)
 
 
 def _terminal_confirm(message: str, default: bool) -> bool:
