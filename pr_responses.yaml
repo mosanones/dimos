@@ -1,15 +1,15 @@
 - pr: 1485
-  comment_id: 2900603055
-  author: greptile-apps[bot]
+  comment_id: 2970239998
+  author: jeff-hykin
   file: dimos/utils/cli/graph.py
   line: 104
-  problem: "HTTP server exposed on all network interfaces (0.0.0.0)"
+  problem: "HTTP server was bound to 0.0.0.0, exposing it on all network interfaces"
   solution: "Changed to bind to 127.0.0.1 instead of 0.0.0.0"
   commit: 8b8326b3c
 
 - pr: 1485
-  comment_id: 2900603115
-  author: greptile-apps[bot]
+  comment_id: 2970240331
+  author: jeff-hykin
   file: dimos/utils/cli/graph.py
   line: 67
   problem: "Temp file leaked if to_svg raises an exception"
@@ -17,8 +17,8 @@
   commit: 8b8326b3c
 
 - pr: 1485
-  comment_id: 2900603172
-  author: greptile-apps[bot]
+  comment_id: 2970240356
+  author: jeff-hykin
   file: dimos/utils/cli/graph.py
   line: 68
   problem: "Blueprint name embedded into HTML without escaping"
@@ -26,8 +26,8 @@
   commit: 33eeea594
 
 - pr: 1485
-  comment_id: 2900603213
-  author: greptile-apps[bot]
+  comment_id: 2970240422
+  author: jeff-hykin
   file: dimos/utils/cli/test_graph.py
   line: 28
   problem: "Incorrect type annotation for pytest tmp_path fixture (typed as object instead of pathlib.Path)"
