@@ -28,9 +28,6 @@ if TYPE_CHECKING:
     from dimos.core.blueprints import Blueprint
     from dimos.core.module import Module
 
-# ---------------------------------------------------------------------------
-# Colour themes
-# ---------------------------------------------------------------------------
 # Each theme is a dict with "nodes" and "edges" colour lists.
 
 THEMES: dict[str, dict[str, list[str]]] = {
