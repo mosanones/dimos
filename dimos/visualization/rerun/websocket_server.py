@@ -32,6 +32,7 @@ Message format (newline-delimited JSON, ``"type"`` discriminant):
 import asyncio
 import json
 import logging
+import socket
 import threading
 from typing import Any
 
@@ -46,7 +47,9 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.constants import RERUN_GRPC_PORT
 
 logger = setup_logger()
 
@@ -145,11 +148,6 @@ class RerunWebSocketServer(Module):
 
     def _log_connect_hints(self) -> None:
         """Log full dimos-viewer commands that viewers can use to connect."""
-        import socket
-
-        from dimos.utils.generic import get_local_ips
-        from dimos.visualization.constants import RERUN_GRPC_PORT
-
         local_ips = get_local_ips()
         hostname = socket.gethostname()
         host = self.config.host
