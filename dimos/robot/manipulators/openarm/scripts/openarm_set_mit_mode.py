@@ -60,7 +60,7 @@ def write_ctrl_mode(bus: can.BusABC, send_id: int, fd: bool) -> bool:
         if len(msg.data) >= 4 and msg.data[2] in (0x33, 0x55):
             rid = msg.data[3]
             if rid == RID_CTRL_MODE:
-                echoed = struct.unpack("<I", bytes(msg.data[4:8]))[0]
+                echoed = int(struct.unpack("<I", bytes(msg.data[4:8]))[0])
                 print(f"  0x{send_id:02X}: ack  CTRL_MODE={echoed} "
                       f"({'MIT' if echoed == MIT_MODE else f'code {echoed}'})")
                 return echoed == MIT_MODE

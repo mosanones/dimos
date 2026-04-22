@@ -149,7 +149,7 @@ def render_cloud(meshcat: Any, ws: WorkspaceMap, path: str = "/workspace") -> No
     """Render a WorkspaceMap's EE positions to Drake's Meshcat, colored by manipulability."""
     from pydrake.perception import BaseField, Fields, PointCloud
 
-    cloud = PointCloud(len(ws.positions), Fields(BaseField.kXYZs | BaseField.kRGBs))
+    cloud = PointCloud(len(ws.positions), Fields(int(BaseField.kXYZs) | int(BaseField.kRGBs)))
     cloud.mutable_xyzs()[:] = ws.positions.T.astype(np.float32)
     cloud.mutable_rgbs()[:] = _colormap(ws.manipulability).T
     meshcat.SetObject(path, cloud, point_size=0.004)

@@ -30,8 +30,8 @@ from dimos.robot.catalog.openarm import (
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 # ── Mock bimanual: no hardware, great for verifying wiring ─────────────
-_mock_left = _openarm(side="left", name="left_arm")
-_mock_right = _openarm(side="right", name="right_arm")
+_mock_left = _openarm(side="left")
+_mock_right = _openarm(side="right")
 
 coordinator_openarm_mock = ControlCoordinator.blueprint(
     hardware=[_mock_left.to_hardware_component(), _mock_right.to_hardware_component()],
@@ -58,10 +58,19 @@ RIGHT_CAN = "can0"
 # replaced / factory-reset).
 AUTO_SET_MIT_MODE = True
 
-_HW_KW = dict(adapter_type="openarm",
-              adapter_kwargs={"auto_set_mit_mode": AUTO_SET_MIT_MODE})
-_left_hw = _openarm(side="left", name="left_arm", address=LEFT_CAN, **_HW_KW)
-_right_hw = _openarm(side="right", name="right_arm", address=RIGHT_CAN, **_HW_KW)
+_ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE}
+_left_hw = _openarm(
+    side="left",
+    address=LEFT_CAN,
+    adapter_type="openarm",
+    adapter_kwargs=_ADAPTER_KWARGS,
+)
+_right_hw = _openarm(
+    side="right",
+    address=RIGHT_CAN,
+    adapter_type="openarm",
+    adapter_kwargs=_ADAPTER_KWARGS,
+)
 
 coordinator_openarm_left = ControlCoordinator.blueprint(
     hardware=[_left_hw.to_hardware_component()],
