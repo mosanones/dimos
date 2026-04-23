@@ -296,56 +296,6 @@ class UnitreeWebRTCConnection(Resource):
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
-    # Rage Mode api_id is not in the public SPORT_CMD table, extracted from
-    # libgo2_ai_module.so .rodata. See data/notes/go2_firmware_modes.md.
-    # ai_sport api_id 2059 → AiController::RageMode → FsmRageMode.
-    _SPORT_API_ID_RAGEMODE: int = 2059
-
-    def set_rage_mode(self, enable: bool) -> bool:
-        """Toggle Rage Mode on the Go2 via WebRTC.
-
-        Rage widens the forward velocity envelope to ~2.5 m/s via a
-        dedicated MNN policy. Velocity commands flow through the
-        existing WIRELESS_CONTROLLER joystick channel (move()), which
-        Rage's FSM consumes — no extra publisher thread needed, unlike
-        the DDS-direct path in UnitreeGo2TwistAdapter.
-
-        Sequence:
-          1. BalanceStand() — satisfies FSM precondition (1002/1003).
-          2. SPORT_MOD api_id 2059 with {"data": enable} — transition
-             into FsmRageMode.
-          3. SwitchJoystick(enable) — flip FSM's joystick input gate.
-
-        Returns True on success (publish_request raises on transport errors).
-        """
-        self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["BalanceStand"]},
-        )
-        time.sleep(0.3)
-
-        resp = self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {
-                "api_id": self._SPORT_API_ID_RAGEMODE,
-                "parameter": {"data": bool(enable)},
-            },
-        )
-
-        if enable:
-            time.sleep(2.0)
-
-        self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {
-                "api_id": SPORT_CMD["SwitchJoystick"],
-                "parameter": {"data": bool(enable)},
-            },
-        )
-
-        print(f"[Go2 WebRTC] ✓ Rage Mode {'enabled' if enable else 'disabled'} (resp={resp!r})")
-        return True
-
     def liedown(self) -> bool:
         return bool(
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
