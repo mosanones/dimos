@@ -19,7 +19,7 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import field_validator
 from reactivex.disposable import Disposable
@@ -30,6 +30,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
+from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image
@@ -210,11 +211,12 @@ class SemanticSearch(MemoryModule):
 
         # TODO(lesh): cluster results by peaks, then sort by time/distance
         # depending on the desired weighting.
-        # fmt: off
-        return self.embeddings \
-            .search(query_vector) \
-            .transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
-        # fmt: on
+        results = self.embeddings.search(query_vector)
+
+        def _similarity(obs: Observation[Any]) -> float:
+            return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
+
+        return results.transform(peaks(key=_similarity, distance=1.0))
 
 
 class Recorder(MemoryModule):
