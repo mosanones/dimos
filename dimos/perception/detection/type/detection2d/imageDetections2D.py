@@ -25,6 +25,8 @@ from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
@@ -34,19 +36,21 @@ T2D = TypeVar("T2D", bound=Detection2D, default=Detection2DBBox)
 
 
 class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
-    def filter(self, mapper):
-        """Filter detections using a mapper function.
+    def filter(self, *predicates: Callable[[T2D], bool]) -> ImageDetections2D[T2D]:
+        """Filter detections using one or more predicate functions.
+
+        Multiple predicates are applied in cascade (all must return True).
 
         Args:
-            mapper: A function that takes a Detection2D and returns a bool indicating
-                whether to keep the detection.
+            *predicates: Functions that take a detection and return True to keep it
 
         Returns:
-            A new ImageDetections2D object containing only the detections for which
-            the mapper returned True.
+            A new ImageDetections2D instance with filtered detections
         """
-        filtered_detections = [det for det in self.detections if mapper(det)]
-        return ImageDetections2D(image=self.image, detections=filtered_detections)
+        filtered = list(self.detections)
+        for predicate in predicates:
+            filtered = [det for det in filtered if predicate(det)]
+        return ImageDetections2D(image=self.image, detections=filtered)
 
     @classmethod
     def from_ros_detection2d_array(
