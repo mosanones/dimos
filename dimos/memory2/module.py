@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import inspect
 import logging
 import os
@@ -31,6 +32,7 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
+from dimos.msgs.sensor_msgs.Image import Image
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +151,10 @@ class MemoryModule(Module):
     """
 
     config: MemoryModuleConfig
-    store: SqliteStore | None = None
+    _store: SqliteStore | None = None
 
     @property
-    def store(self):
+    def store(self) -> SqliteStore:
         if self._store is not None:
             return self._store
 
@@ -164,53 +166,58 @@ class MemoryModule(Module):
 
 
 class SemanticSearchConfig(MemoryModuleConfig):
-    embedding_model: EmbeddingModel = CLIPModel
+    embedding_model: type[EmbeddingModel] = CLIPModel
 
 
 class SemanticSearch(MemoryModule):
     config: SemanticSearchConfig
     model: EmbeddingModel | None = None
+    embeddings: Stream[Any] | None = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         self.model = self.register_disposable(self.config.embedding_model())
-
         self.model.start()
 
-        self.embeddings = self.register_disposable(
-            self.store.stream("color_image_embedded", Image),
-        )
+        self.embeddings = self.store.stream("color_image_embedded", Image)
 
+        # TODO(lesh): live embedding pipeline is not wired up yet.
+        #   - `.drain()` blocks forever on a live stream; needs background execution
+        #     (thread/task) or a subscription-based API
+        #   - `register_disposable` wants a DisposableBase, not the `int` returned by drain
+        #   Until then, the color_image stream is not embedded on-the-fly.
         # fmt: off
-        self.register_disposable(
-            self._store.streams.color_image \
-               .live() \
-               .filter(lambda obs: obs.data.brightness > 0.1) \
-               .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
-               .transform(EmbedImages(clip, batch_size=2)) \
-               .save(self.embeddings) \
-               .drain())
+        # self.store.streams.color_image \
+        #    .live() \
+        #    .filter(lambda obs: obs.data.brightness > 0.1) \
+        #    .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
+        #    .transform(EmbedImages(self.model, batch_size=2)) \
+        #    .save(self.embeddings) \
+        #    .drain()
         # fmt: on
 
     @skill
-    def search(self, query: str):
+    def search(self, query: str) -> Stream[Any]:
         from dimos.memory2.transform import peaks
+
+        assert self.model is not None and self.embeddings is not None, (
+            "SemanticSearch.search() called before start()"
+        )
 
         query_vector = self.model.embed_text(query)
 
+        # TODO(lesh): cluster results by peaks, then sort by time/distance
+        # depending on the desired weighting.
         # fmt: off
-        self.embeddings \
+        return self.embeddings \
             .search(query_vector) \
             .transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
         # fmt: on
 
-        # TODO we want to cluster these by peaks
-        # then we want to sort by time/distance depending on desired weight here..
 
-
-class Recorder(Module):
+class Recorder(MemoryModule):
     """Records all ``In`` ports to a memory2 SQLite database.
 
     Subclass with the topics you want to record::
@@ -223,14 +230,15 @@ class Recorder(Module):
     """
 
     config: RecorderConfig
-    store: SqliteStore | None = None
 
-    def __init__(self) -> None:
-        # optionally delete existing recording on init if overwrite is True
-        # TODO: store reset API/logic is not implemented yet
-        # this module should have no relation to actual files (this is SqliteStore specific)
-        # .live() subs need to know how to re-sub
-        # in case of a restart of this module in a deployed blueprint
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        # TODO: store reset API/logic is not implemented yet. This module
+        # shouldn't need to know about files (SqliteStore specific), and
+        # .live() subs need to know how to re-sub in case of a restart of
+        # this module in a deployed blueprint.
         db_path = Path(self.config.db_path)
         if db_path.exists():
             if self.config.overwrite:
@@ -239,17 +247,11 @@ class Recorder(Module):
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
-    @rpc
-    def start(self) -> None:
-        super().start()
-
         if not self.inputs:
             logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
             return
 
         for name, port in self.inputs.items():
             stream: Stream[Any] = self.store.stream(name, port.type)
-            self.register_disposable(
-                Disposable(port.subscribe(lambda msg, s=stream: s.append(msg)))  # type: ignore[misc]
-            )
+            self.register_disposable(Disposable(port.subscribe(partial(Stream.append, stream))))
             logger.info("Recording %s (%s)", name, port.type.__name__)

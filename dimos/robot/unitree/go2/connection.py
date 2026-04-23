@@ -222,10 +222,6 @@ class GO2Connection(Module, Camera, Pointcloud):
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
 
-    @property
-    def camera_info(self) -> Out[CameraInfo]:
-        return _camera_info_static()
-
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
         """Return Rerun view blueprints for GO2 camera visualization."""
