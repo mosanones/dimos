@@ -297,6 +297,7 @@ class TestDdsSdkMove:
         # Timer should have been started
         assert mod._stop_timer is not None
         mod._stop_timer.cancel()  # cleanup
+        mod._stop_timer.join(timeout=2.0)  # wait for timer thread to exit
 
     def test_move_exception(self) -> None:
         mod = _make_dds_module()
