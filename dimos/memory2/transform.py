@@ -264,6 +264,8 @@ def _gap_threshold(values: list[float]) -> float:
     """Largest log-ratio gap between consecutive sorted values."""
     sorted_vals = sorted(v for v in values if v > 0)
     n = len(sorted_vals)
+    if n < 2:
+        return sorted(values)[len(values) // 2] if values else 0.0
     best_ratio, best_idx = 0.0, n - 1
     for i in range(n - 1):
         ratio = sorted_vals[i + 1] / sorted_vals[i]

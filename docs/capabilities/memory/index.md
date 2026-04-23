@@ -38,7 +38,7 @@ global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_byte
 
 drawing = Space()
 
-# this is not neccessary but we use a global map as a nice base for a drawing
+# this is not necessary but we use a global map as a nice base for a drawing
 drawing.add(global_map)
 drawing.add(store.streams.color_image)
 drawing.to_svg("assets/color_image.svg")
@@ -77,7 +77,7 @@ drawing.add(global_map)
 
 drawing.add(
   store.streams.color_image \
-  # here we will take 4fps because brigtness calculation loads the actual image
+  # here we will take 4fps because brightness calculation loads the actual image
   # observation.data triggers another db query to fetch the data
   # otherwise observations only hold positions and timestamps
   .transform(throttle(0.25)) \

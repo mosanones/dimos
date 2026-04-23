@@ -337,8 +337,3 @@ class TestEmbedImages:
             assert obs.similarity is not None
             assert obs.pose is not None
             print(f"sim={obs.similarity:.3f} ts={obs.ts} pose={obs.pose}")
-            print(f"sim={obs.similarity:.3f} ts={obs.ts} pose={obs.pose}")
-            assert obs.similarity is not None
-            assert obs.pose is not None
-            print(f"sim={obs.similarity:.3f} ts={obs.ts} pose={obs.pose}")
-            print(f"sim={obs.similarity:.3f} ts={obs.ts} pose={obs.pose}")

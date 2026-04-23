@@ -127,7 +127,6 @@ all_modules = {
     "go2-connection": "dimos.robot.unitree.go2.connection.GO2Connection",
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
-    "go2-recorder": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic.Go2Recorder",
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
     "grasp-gen-module": "dimos.manipulation.grasping.graspgen_module.GraspGenModule",

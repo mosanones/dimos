@@ -54,8 +54,7 @@ def mosaic(
         elif isinstance(f, EmbeddedObservation) and isinstance(f.data, ImageDetections2D):
             images.append(f.data.annotated_image(scale=4))
         else:
-            print(f)
-            raise TypeError(f"Cannot extract Image from {type(f).__name__}")
+            raise TypeError(f"Cannot extract Image from {type(f).__name__}: {f!r}")
     if not images:
         raise ValueError("No images to mosaic")
 
