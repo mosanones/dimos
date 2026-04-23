@@ -40,7 +40,7 @@ unitree_go2 = autoconnect(
 
 
 class Go2MemoryConfig(RecorderConfig):
-    db_path: str | Path = "go2_recording.db"
+    db_path: str | Path = "recording_go2.db"
 
 
 class Go2Memory(Recorder):
