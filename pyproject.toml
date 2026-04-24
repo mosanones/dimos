@@ -93,7 +93,8 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 # removed --cov flags so a quick `pytest` run doesn't require pytest-cov installed
 # -p no:warnings added locally to reduce noise while exploring the codebase
-addopts = "-v -p no:warnings"
+# --tb=short gives more concise tracebacks which I find easier to read
+addopts = "-v -p no:warnings --tb=short"
 
 [tool.coverage.run]
 source = ["src/dimos"]
