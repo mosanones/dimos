@@ -2,6 +2,10 @@
 
 A framework for building and orchestrating AI-powered robotic systems,
 providing abstractions for agents, memory, perception, and actuation.
+
+Personal fork notes:
+    - Forked for personal learning and experimentation.
+    - Upstream: https://github.com/dimensionalOS/dimos
 """
 
 from importlib.metadata import PackageNotFoundError, version
