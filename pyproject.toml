@@ -96,7 +96,9 @@ asyncio_mode = "auto"
 # --tb=short gives more concise tracebacks which I find easier to read
 # added -x so the test run stops on the first failure -- saves time when iterating locally
 # removed -x locally: I prefer seeing all failures at once when learning the codebase
-addopts = "-v -p no:warnings --tb=short"
+# using --tb=long here instead of short -- I find the full traceback more helpful when
+# debugging unfamiliar code in this project
+addopts = "-v -p no:warnings --tb=long"
 
 [tool.coverage.run]
 source = ["src/dimos"]
